@@ -31,7 +31,7 @@ trait Lz77Trait<T> {
     fn get_char_pos(ref self: Lz77<T>, char: u8) -> Nullable<Span<usize>>;
     fn record_char_pos(ref self: Lz77<T>, char: u8);
     fn update_matches(ref self: Lz77<T>, ref char_pos: Span<usize>);
-    fn best_match(ref self: Lz77<T>) -> Match;
+    fn best_match(ref self: Lz77<T>) -> Nullable<Match>;
 }
 
 impl Lz77Impl of Lz77Trait<ByteArray> {
@@ -138,17 +138,17 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
 
         self.matches = matches;
     }
-    fn best_match(ref self: Lz77<ByteArray>) -> Match {
+    fn best_match(ref self: Lz77<ByteArray>) -> Nullable<Match> {
         let mut best: Nullable<Match> = Default::default();
         loop {
             match self.matches.pop_front() {
                 Option::Some(m) => {
                     match match_nullable(best) {
                         FromNullableResult::Null(()) => {
-                            best = m;
+                            best = nullable_from_box(BoxTrait::new(m));
                         },
                         FromNullableResult::NotNull(best_m) => {
-                            if m.length > best_m.deref().length {
+                            if m.length > best_m.unbox().length {
                                 best = nullable_from_box(BoxTrait::new(m));
                             }
                         }
@@ -177,8 +177,8 @@ impl Lz77Encoder of Encoder<ByteArray> {
                         FromNullableResult::Null(()) => {
                             //process previous matches
                             if !lz77.matches.is_empty() {
-                                let best = lz77.best_match();
-                                if best.length > MIN_MATCH_LEN {
+                                let best: Nullable<Match> = lz77.best_match();
+                                if best.deref().length > MIN_MATCH_LEN {
                                     //append match
                                     'append match'.print();
                                 } else {
