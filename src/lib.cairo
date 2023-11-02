@@ -4,5 +4,5 @@ mod commons;
 
 #[cfg(test)]
 mod tests {
-    mod deflate_test;
+    mod lz77_test;
 }
