@@ -1,12 +1,13 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictTrait;
 use integer::u32_overflowing_sub;
-use compression::commons::{Encoder, NumberIntoString};
-
-use debug::PrintTrait;
+use alexandria_ascii::ToAsciiTrait;
+use compression::commons::{Encoder, Decoder, felt252_word_len};
 
 const WINDOW_SIZE: usize = 32768;
 const MIN_MATCH_LEN: usize = 3;
+const ESCAPE_BYTE: u8 = 0xFF;
+const ASCII_OFFSET: u8 = 0x30;
 
 #[derive(Copy, Drop)]
 struct Match {
@@ -21,23 +22,28 @@ struct Lz77<T> {
     output: T,
     matches: Array<Match>,
     byte_pos: Felt252Dict<Nullable<Span<usize>>>,
-    cur_pos: usize
+    input_pos: usize,
+    output_pos: usize
 }
 
 trait Lz77Trait<T> {
     fn new(input: @T) -> Lz77<T>;
     fn window_start(self: @Lz77<T>) -> usize;
     fn input_read(ref self: Lz77<T>) -> Option<u8>;
-    fn output_pos(ref self: Lz77<T>) -> usize;
     fn increment_pos(ref self: Lz77<T>);
     fn get_byte_pos(ref self: Lz77<T>, byte: u8) -> Nullable<Span<usize>>;
     fn record_byte_pos(ref self: Lz77<T>, byte: u8);
     fn create_match(ref self: Lz77<T>, start: usize);
     fn update_matches(ref self: Lz77<T>, byte: u8);
     fn best_match(self: @Lz77<T>) -> Nullable<Match>;
-    fn active_matching(self: @Lz77<T>) -> bool;
-    fn output_raw_match(ref self: Lz77<T>, m: Match);
+    fn is_active_matching(self: @Lz77<T>) -> bool;
     fn process_matches(ref self: Lz77<T>);
+    fn output_byte(ref self: Lz77<T>, byte: u8);
+    fn output_raw_match(ref self: Lz77<T>, m: Match);
+    fn output_match(ref self: Lz77<T>, m: Match);
+    fn decode_match(ref self: Lz77<T>);
+    fn output_decoded_match(ref self: Lz77<T>, m: Match);
+    fn parse_match_value(ref self: Lz77<T>) -> usize;
 }
 
 impl Lz77Impl of Lz77Trait<ByteArray> {
@@ -48,27 +54,24 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
             output: Default::default(),
             matches: array![],
             byte_pos: Default::default(),
-            cur_pos: 0
+            input_pos: 0,
+            output_pos: 0
         }
     }
     #[inline(always)]
     fn window_start(self: @Lz77<ByteArray>) -> usize {
-        match u32_overflowing_sub(*self.cur_pos, WINDOW_SIZE) {
+        match u32_overflowing_sub(*self.input_pos, WINDOW_SIZE) {
             Result::Ok(x) => x,
             Result::Err(x) => 0_u32,
         }
     }
     #[inline(always)]
     fn input_read(ref self: Lz77<ByteArray>) -> Option<u8> {
-        self.input.at(self.cur_pos)
-    }
-    #[inline(always)]
-    fn output_pos(ref self: Lz77<ByteArray>) -> usize {
-        self.output.len()
+        self.input.at(self.input_pos)
     }
     #[inline(always)]
     fn increment_pos(ref self: Lz77<ByteArray>) {
-        self.cur_pos += 1;
+        self.input_pos += 1;
     }
     #[inline(always)]
     fn get_byte_pos(ref self: Lz77<ByteArray>, byte: u8) -> Nullable<Span<usize>> {
@@ -80,9 +83,11 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         let mut arr_pos: Array<usize> = array![];
 
         match match_nullable(self.get_byte_pos(byte)) {
+            //unknown byte
             FromNullableResult::Null(()) => {
-                arr_pos = array![self.cur_pos];
+                arr_pos = array![self.input_pos];
             },
+            //known byte
             FromNullableResult::NotNull(span_pos) => {
                 let mut span_pos = span_pos.unbox();
                 let window_start = self.window_start();
@@ -100,7 +105,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                         },
                     };
                 };
-                arr_pos.append(self.cur_pos);
+                arr_pos.append(self.input_pos);
             }
         }
 
@@ -108,45 +113,27 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     }
     #[inline(always)]
     fn create_match(ref self: Lz77<ByteArray>, start: usize) {
-        let m = Match { start: start, length: 1, pos: self.cur_pos };
+        let m = Match { start: start, length: 1, pos: self.input_pos };
         self.matches.append(m);
     }
     fn update_matches(ref self: Lz77<ByteArray>, byte: u8) {
         if !self.matches.is_empty() {
-            let cur_pos = self.cur_pos;
-            // 'cur_pos'.print();
-            // cur_pos.print();
-            // let output_pos = self.output_pos();
-            // 'output_pos'.print();
-            // output_pos.print();
+            let input_pos = self.input_pos;
             let mut updated_matches: Array<Match> = array![];
             let mut matches = self.matches.span();
             loop {
                 match matches.pop_front() {
                     Option::Some(m) => {
                         let m = *m;
-                        let active = m.pos + 1 == cur_pos;
-                        let next_pos = m.start + m.length;
-                        let next_byte = self.input.at(next_pos).unwrap();
+                        let active = m.pos + 1 == input_pos;
+                        let next_byte = self.input.at(m.start + m.length).unwrap();
                         let updatable = next_byte == byte;
                         if active && updatable {
-                            // 'updated'.print();
                             updated_matches
                                 .append(
-                                    Match { start: m.start, length: m.length + 1, pos: cur_pos }
+                                    Match { start: m.start, length: m.length + 1, pos: input_pos }
                                 );
                         } else {
-                            // 'not updated'.print();
-                            // 'match'.print();
-                            // m.start.print();
-                            // m.length.print();
-                            // m.pos.print();
-                            // 'active'.print();
-                            // active.print();
-                            // 'updatable'.print();
-                            // updatable.print();
-                            // 'next_byte'.print();
-                            // next_byte.print();
                             updated_matches.append(m);
                         }
                     },
@@ -166,12 +153,17 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
             match matches.pop_front() {
                 Option::Some(m) => {
                     let m = *m;
+
                     match match_nullable(best) {
                         FromNullableResult::Null(()) => {
-                            best = nullable_from_box(BoxTrait::new(m));
+                            if m.length >= MIN_MATCH_LEN {
+                                best = nullable_from_box(BoxTrait::new(m));
+                            }
                         },
                         FromNullableResult::NotNull(best_m) => {
-                            if m.length > best_m.unbox().length {
+                            let best_m = best_m.unbox();
+                            if m.length > best_m.length
+                                || (m.length == best_m.length && m.start > best_m.start) {
                                 best = nullable_from_box(BoxTrait::new(m));
                             }
                         }
@@ -184,20 +176,14 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         };
         best
     }
-    fn active_matching(self: @Lz77<ByteArray>) -> bool {
+    fn is_active_matching(self: @Lz77<ByteArray>) -> bool {
         let mut matches = self.matches.span();
-        let cur_pos = *self.cur_pos;
-        // 'active_matching'.print();
-        // cur_pos.print();
+        let input_pos = *self.input_pos;
         loop {
             match matches.pop_front() {
                 Option::Some(m) => {
                     let m = *m;
-                    // 'match'.print();
-                    // m.start.print();
-                    // m.length.print();
-                    // m.pos.print();
-                    if m.pos == cur_pos {
+                    if m.pos == input_pos {
                         break true;
                     }
                 },
@@ -207,62 +193,127 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
             };
         }
     }
+    #[inline(always)]
+    fn process_matches(ref self: Lz77<ByteArray>) {
+        if !self.matches.is_empty() {
+            let input_pos = self.input_pos;
+            let output_pos = self.output_pos;
+            match match_nullable(self.best_match()) {
+                FromNullableResult::Null(()) => {
+                    //append raw sequence
+                    self
+                        .output_raw_match(
+                            Match { start: output_pos, length: input_pos - output_pos, pos: 0 }
+                        );
+                },
+                FromNullableResult::NotNull(best) => {
+                    let best = best.unbox();
+                    //output eventual raw sequence before match
+                    if output_pos + best.length < best.pos + 1 {
+                        self
+                            .output_raw_match(
+                                Match {
+                                    start: output_pos,
+                                    length: best.pos + 1 - best.length - output_pos,
+                                    pos: 0
+                                }
+                            );
+                    }
+                    //output match
+                    self.output_match(best);
+                    //output eventual raw sequence after match
+                    if best.pos + 1 < input_pos {
+                        self
+                            .output_raw_match(
+                                Match {
+                                    // start: output_pos + before_length + best.length,
+                                    start: best.pos + 1, length: input_pos - (best.pos + 1), pos: 0
+                                }
+                            );
+                    }
+                }
+            }
+            //reset matches
+            self.matches = array![];
+        }
+    }
+    #[inline(always)]
+    fn output_byte(ref self: Lz77<ByteArray>, byte: u8) {
+        self.output.append_byte(byte);
+        self.output_pos += 1;
+    }
     fn output_raw_match(ref self: Lz77<ByteArray>, m: Match) {
         if m.length > 0 {
             match self.input.at(m.start) {
                 Option::Some(byte) => {
-                    self.output.append_byte(byte);
+                    self.output_byte(byte);
                     self
                         .output_raw_match(
-                            Match { start: m.start + 1, length: m.length - 1, pos: m.pos }
+                            Match { start: m.start + 1, length: m.length - 1, pos: 0 }
                         );
                 },
                 Option::None => {},
             }
         }
     }
-    fn process_matches(ref self: Lz77<ByteArray>) {
-        if !self.matches.is_empty() {
-            // 'matches'.print();
-            // self.matches.len().print();
-            let best: Match = self.best_match().deref();
-            // 'best match'.print();
-            // best.distance.print();
-            // best.start.print();
-            // best.length.print();
-            if best.length > MIN_MATCH_LEN {
-                //append match
-                'append match'.print();
-                let mut distance: Span<u8> = (self.output.len() - best.start).into();
-                let mut length: Span<u8> = best.length.into();
-                self.output.append_byte('<');
-                loop {
-                    match distance.pop_front() {
-                        Option::Some(byte) => {
-                            self.output.append_byte(*byte);
-                        },
-                        Option::None => {
-                            break false;
-                        },
-                    };
-                };
-                self.output.append_byte(',');
-                loop {
-                    match length.pop_front() {
-                        Option::Some(byte) => {
-                            self.output.append_byte(*byte);
-                        },
-                        Option::None => {
-                            break false;
-                        },
-                    };
-                };
-                self.output.append_byte('>');
-            } else {
-                //append raw sequence
-                self.output_raw_match(best);
+    #[inline(always)]
+    fn output_match(ref self: Lz77<ByteArray>, m: Match) {
+        let offset: felt252 = (self.output_pos - m.start).to_ascii();
+        let offset_word_len = felt252_word_len(@offset);
+        let length: felt252 = m.length.to_ascii();
+        let length_word_len = felt252_word_len(@length);
+
+        self.output.append_byte(ESCAPE_BYTE);
+        self.output.append_word(offset, offset_word_len);
+        self.output.append_byte(ESCAPE_BYTE);
+        self.output.append_word(length, length_word_len);
+        self.output.append_byte(ESCAPE_BYTE);
+
+        self.output_pos += m.length;
+    }
+    #[inline(always)]
+    fn decode_match(ref self: Lz77<ByteArray>) {
+        let mut offset = self.parse_match_value();
+        let mut length = self.parse_match_value();
+        let m = Match { start: self.output_pos - offset, length: length, pos: 0 };
+
+        self.output_decoded_match(m);
+    }
+    fn output_decoded_match(ref self: Lz77<ByteArray>, m: Match) {
+        if m.length > 0 {
+            match self.output.at(m.start) {
+                Option::Some(byte) => {
+                    self.output_byte(byte);
+                    self
+                        .output_decoded_match(
+                            Match { start: m.start + 1, length: m.length - 1, pos: 0 }
+                        );
+                },
+                Option::None => {},
             }
         }
+    }
+    fn parse_match_value(ref self: Lz77<ByteArray>) -> usize {
+        let mut value: usize = 0;
+
+        loop {
+            self.increment_pos();
+            match self.input_read() {
+                Option::Some(byte) => {
+                    if byte != ESCAPE_BYTE {
+                        assert(byte >= ASCII_OFFSET, 'invalid ascii value');
+                        value = value * 10 + (byte - ASCII_OFFSET).into();
+                    } else {
+                        break;
+                    }
+                },
+                Option::None => {
+                    break;
+                },
+            };
+        };
+
+        value
     }
 }
 
@@ -274,16 +325,15 @@ impl Lz77Encoder of Encoder<ByteArray> {
             //get new byte
             match lz77.input_read() {
                 Option::Some(byte) => {
-                    byte.print();
                     lz77.update_matches(byte);
-                    if !lz77.active_matching() {
+                    if !lz77.is_active_matching() {
                         lz77.process_matches();
                     }
                     match match_nullable(lz77.get_byte_pos(byte)) {
                         //no previous byte record
                         FromNullableResult::Null(()) => {
                             //append raw byte to output
-                            lz77.output.append_byte(byte);
+                            lz77.output_byte(byte);
                         },
                         //existing byte records
                         FromNullableResult::NotNull(byte_pos) => {
@@ -291,43 +341,50 @@ impl Lz77Encoder of Encoder<ByteArray> {
                             // create new matches
                             loop {
                                 match byte_pos.pop_front() {
-                                    Option::Some(byte) => {
-                                        byte.print();
-                                        i += 1;
+                                    Option::Some(pos) => {
+                                        lz77.create_match(*pos);
                                     },
                                     Option::None(()) => {
                                         break;
                                     },
                                 };
                             };
-                            lz77.create_match(*byte_pos.get(byte_pos.len() - 1).unwrap().unbox());
                         }
                     }
                     //reference byte position in dict
                     lz77.record_byte_pos(byte);
-                },
-                Option::None(()) => {
-                    break;
-                },
-            }
-
-            lz77.increment_pos();
-        };
-
-        'output'.print();
-        let output = lz77.output.clone();
-        let mut i = 0;
-        loop {
-            match output.at(i) {
-                Option::Some(byte) => {
-                    byte.print();
-                    i += 1;
+                    lz77.increment_pos();
                 },
                 Option::None(()) => {
                     break;
                 },
             };
         };
+
+        lz77.output
+    }
+}
+
+impl Lz77Decoder of Decoder<ByteArray> {
+    fn decode(data: ByteArray) -> ByteArray {
+        let mut lz77 = Lz77Impl::new(@data);
+
+        loop {
+            match lz77.input_read() {
+                Option::Some(byte) => {
+                    if byte != ESCAPE_BYTE {
+                        lz77.output_byte(byte);
+                    } else {
+                        lz77.decode_match();
+                    }
+                },
+                Option::None => {
+                    break;
+                },
+            }
+            lz77.increment_pos();
+        };
+
         lz77.output
     }
 }

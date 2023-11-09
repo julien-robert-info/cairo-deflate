@@ -1,36 +1,25 @@
-use integer::u32_wide_mul;
-
-const ASCII_NUMBER_OFFSET: u32 = 0x30;
-const MSB_TO_LSB_SHIFT: u32 = 0x1000;
-const BYTE_SHIFT: u32 = 0x10;
-const U32_MASK: u64 = 0xFFFF;
+const BYTE_LEN: u256 = 0x100;
 
 trait Encoder<T> {
-    fn encode(data: T) -> ByteArray;
+    fn encode(data: T) -> T;
 }
 
 trait Decoder<T> {
-    fn decode(data: T) -> ByteArray;
+    fn decode(data: T) -> T;
 }
 
-impl NumberIntoString of Into<u32, Span<u8>> {
-    fn into(self: u32) -> Span<u8> {
-        let mut result: Array<u8> = array![];
-        let mut self: u32 = self;
+fn felt252_word_len(word: @felt252) -> usize {
+    let mut word: u256 = (*word).into();
+    let mut length = 0;
 
-        loop {
-            if self == 0 {
-                break;
-            }
+    loop {
+        if word == 0 {
+            break;
+        }
 
-            let byte = self / MSB_TO_LSB_SHIFT;
-            if byte != 0 {
-                result.append((byte + ASCII_NUMBER_OFFSET).try_into().unwrap());
-            }
-            self = (u32_wide_mul(self, BYTE_SHIFT) & U32_MASK).try_into().unwrap();
-        };
+        word = word / BYTE_LEN;
+        length += 1;
+    };
 
-        result.span()
-    }
+    length
 }
-
