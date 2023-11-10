@@ -1,11 +1,11 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictTrait;
 use integer::u32_overflowing_sub;
-use alexandria_ascii::ToAsciiTrait;
 use compression::commons::{Encoder, Decoder, felt252_word_len};
 
 const WINDOW_SIZE: usize = 32768;
 const MIN_MATCH_LEN: usize = 3;
+const MAX_MATCH_LEN: usize = 258;
 const ESCAPE_BYTE: u8 = 0xFF;
 const ASCII_OFFSET: u8 = 0x30;
 
@@ -41,9 +41,8 @@ trait Lz77Trait<T> {
     fn output_byte(ref self: Lz77<T>, byte: u8);
     fn output_raw_match(ref self: Lz77<T>, m: Match);
     fn output_match(ref self: Lz77<T>, m: Match);
-    fn decode_match(ref self: Lz77<T>);
+    fn decode_match(ref self: Lz77<T>) -> Match;
     fn output_decoded_match(ref self: Lz77<T>, m: Match);
-    fn parse_match_value(ref self: Lz77<T>) -> usize;
 }
 
 impl Lz77Impl of Lz77Trait<ByteArray> {
@@ -96,6 +95,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                     match span_pos.pop_front() {
                         Option::Some(pos) => {
                             let pos = *pos;
+                            //dump pos outside of window
                             if pos >= window_start {
                                 arr_pos.append(pos);
                             }
@@ -128,7 +128,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                         let active = m.pos + 1 == input_pos;
                         let next_byte = self.input.at(m.start + m.length).unwrap();
                         let updatable = next_byte == byte;
-                        if active && updatable {
+                        if active && updatable && m.length < MAX_MATCH_LEN {
                             updated_matches
                                 .append(
                                     Match { start: m.start, length: m.length + 1, pos: input_pos }
@@ -226,7 +226,6 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                         self
                             .output_raw_match(
                                 Match {
-                                    // start: output_pos + before_length + best.length,
                                     start: best.pos + 1, length: input_pos - (best.pos + 1), pos: 0
                                 }
                             );
@@ -258,26 +257,26 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     }
     #[inline(always)]
     fn output_match(ref self: Lz77<ByteArray>, m: Match) {
-        let offset: felt252 = (self.output_pos - m.start).to_ascii();
-        let offset_word_len = felt252_word_len(@offset);
-        let length: felt252 = m.length.to_ascii();
-        let length_word_len = felt252_word_len(@length);
+        let length: u8 = (m.length - MIN_MATCH_LEN).try_into().unwrap();
+        let offset: u16 = (self.output_pos - m.start).try_into().unwrap();
 
         self.output.append_byte(ESCAPE_BYTE);
-        self.output.append_word(offset, offset_word_len);
-        self.output.append_byte(ESCAPE_BYTE);
-        self.output.append_word(length, length_word_len);
-        self.output.append_byte(ESCAPE_BYTE);
+        self.output.append_byte(length);
+        self.output.append_byte((offset & 0xFF00).try_into().unwrap());
+        self.output.append_byte((offset & 0xFF).try_into().unwrap());
 
         self.output_pos += m.length;
     }
     #[inline(always)]
-    fn decode_match(ref self: Lz77<ByteArray>) {
-        let mut offset = self.parse_match_value();
-        let mut length = self.parse_match_value();
-        let m = Match { start: self.output_pos - offset, length: length, pos: 0 };
+    fn decode_match(ref self: Lz77<ByteArray>) -> Match {
+        self.increment_pos();
+        let length: usize = self.input_read().unwrap().into() + MIN_MATCH_LEN;
+        self.increment_pos();
+        let mut offset: usize = self.input_read().unwrap().into();
+        self.increment_pos();
+        offset = offset * 256 + self.input_read().unwrap().into();
 
-        self.output_decoded_match(m);
+        Match { start: self.output_pos - offset, length: length, pos: 0 }
     }
     fn output_decoded_match(ref self: Lz77<ByteArray>, m: Match) {
         if m.length > 0 {
@@ -292,28 +291,6 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                 Option::None => {},
             }
         }
-    }
-    fn parse_match_value(ref self: Lz77<ByteArray>) -> usize {
-        let mut value: usize = 0;
-
-        loop {
-            self.increment_pos();
-            match self.input_read() {
-                Option::Some(byte) => {
-                    if byte != ESCAPE_BYTE {
-                        assert(byte >= ASCII_OFFSET, 'invalid ascii value');
-                        value = value * 10 + (byte - ASCII_OFFSET).into();
-                    } else {
-                        break;
-                    }
-                },
-                Option::None => {
-                    break;
-                },
-            };
-        };
-
-        value
     }
 }
 
@@ -375,7 +352,7 @@ impl Lz77Decoder of Decoder<ByteArray> {
                     if byte != ESCAPE_BYTE {
                         lz77.output_byte(byte);
                     } else {
-                        lz77.decode_match();
+                        lz77.output_decoded_match(lz77.decode_match());
                     }
                 },
                 Option::None => {
