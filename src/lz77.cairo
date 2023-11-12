@@ -92,13 +92,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
 
                 loop {
                     match span_pos.pop_front() {
-                        Option::Some(pos) => {
-                            let pos = *pos;
-                            //dump pos outside of window
-                            if pos >= window_start {
-                                arr_pos.append(pos);
-                            }
-                        },
+                        Option::Some(pos) => arr_pos.append(*pos),
                         Option::None(()) => {
                             break;
                         },
@@ -118,22 +112,27 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     fn update_matches(ref self: Lz77<ByteArray>, byte: u8) {
         if !self.matches.is_empty() {
             let input_pos = self.input_pos;
+            let window_start = self.window_start();
             let mut updated_matches: Array<Match> = array![];
             let mut matches = self.matches.span();
             loop {
                 match matches.pop_front() {
                     Option::Some(m) => {
                         let m = *m;
-                        let active = m.pos + 1 == input_pos;
-                        let next_byte = self.input.at(m.start + m.length).unwrap();
-                        let updatable = next_byte == byte;
-                        if active && updatable && m.length < MAX_MATCH_LEN {
-                            updated_matches
-                                .append(
-                                    Match { start: m.start, length: m.length + 1, pos: input_pos }
-                                );
-                        } else {
-                            updated_matches.append(m);
+                        if m.start >= window_start {
+                            let active = m.pos + 1 == input_pos;
+                            let next_byte = self.input.at(m.start + m.length).unwrap();
+                            let updatable = next_byte == byte;
+                            if active && updatable && m.length < MAX_MATCH_LEN {
+                                updated_matches
+                                    .append(
+                                        Match {
+                                            start: m.start, length: m.length + 1, pos: input_pos
+                                        }
+                                    );
+                            } else {
+                                updated_matches.append(m);
+                            }
                         }
                     },
                     Option::None(()) => {
@@ -199,7 +198,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
             let output_pos = self.output_pos;
             match match_nullable(self.best_match()) {
                 FromNullableResult::Null(()) => {
-                    //append raw sequence
+                    //output raw sequence
                     self
                         .output_raw_match(
                             Match { start: output_pos, length: input_pos - output_pos, pos: 0 }
@@ -308,7 +307,7 @@ impl Lz77Encoder of Encoder<ByteArray> {
                     match match_nullable(lz77.get_byte_pos(byte)) {
                         //no previous byte record
                         FromNullableResult::Null(()) => {
-                            //append raw byte to output
+                            //output raw byte
                             lz77.output_byte(byte);
                         },
                         //existing byte records
