@@ -1,13 +1,12 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictTrait;
 use integer::u32_overflowing_sub;
-use compression::commons::{Encoder, Decoder, felt252_word_len};
+use compression::commons::{Encoder, Decoder};
 
 const WINDOW_SIZE: usize = 32768;
 const MIN_MATCH_LEN: usize = 3;
 const MAX_MATCH_LEN: usize = 258;
 const ESCAPE_BYTE: u8 = 0xFF;
-const ASCII_OFFSET: u8 = 0x30;
 
 #[derive(Copy, Drop)]
 struct Match {
@@ -208,7 +207,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                 },
                 FromNullableResult::NotNull(best) => {
                     let best = best.unbox();
-                    //output eventual raw sequence before match
+                    //output potential raw sequence before match
                     if output_pos + best.length < best.pos + 1 {
                         self
                             .output_raw_match(
@@ -221,7 +220,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                     }
                     //output match
                     self.output_match(best);
-                    //output eventual raw sequence after match
+                    //output potential raw sequence after match
                     if best.pos + 1 < input_pos {
                         self
                             .output_raw_match(
