@@ -1,12 +1,11 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictTrait;
 use integer::u32_overflowing_sub;
-use compression::commons::{Encoder, Decoder};
+use compression::commons::{ESCAPE_BYTE, Encoder, Decoder};
 
 const WINDOW_SIZE: usize = 32768;
 const MIN_MATCH_LEN: usize = 3;
 const MAX_MATCH_LEN: usize = 258;
-const ESCAPE_BYTE: u8 = 0xFF;
 
 #[derive(Copy, Drop)]
 struct Match {
@@ -40,6 +39,7 @@ trait Lz77Trait<T> {
     fn output_byte(ref self: Lz77<T>, byte: u8);
     fn output_raw_match(ref self: Lz77<T>, m: Match);
     fn output_match(ref self: Lz77<T>, m: Match);
+    fn is_escaped(ref self: Lz77<T>) -> bool;
     fn decode_match(ref self: Lz77<T>) -> Match;
     fn output_decoded_match(ref self: Lz77<T>, m: Match);
 }
@@ -79,26 +79,24 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     fn record_byte_pos(ref self: Lz77<ByteArray>, byte: u8) {
         let felt_byte: felt252 = byte.into();
         let mut arr_pos: Array<usize> = array![];
+        let input_pos = self.input_pos;
 
         match match_nullable(self.get_byte_pos(byte)) {
             //unknown byte
-            FromNullableResult::Null(()) => {
-                arr_pos = array![self.input_pos];
-            },
+            FromNullableResult::Null(()) => arr_pos = array![input_pos],
             //known byte
             FromNullableResult::NotNull(span_pos) => {
                 let mut span_pos = span_pos.unbox();
-                let window_start = self.window_start();
 
+                //deref previous pos
                 loop {
                     match span_pos.pop_front() {
                         Option::Some(pos) => arr_pos.append(*pos),
-                        Option::None(()) => {
-                            break;
-                        },
-                    };
+                        Option::None(()) => { break; },
+                    }
                 };
-                arr_pos.append(self.input_pos);
+                //append new pos
+                arr_pos.append(input_pos);
             }
         }
 
@@ -135,9 +133,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                             }
                         }
                     },
-                    Option::None(()) => {
-                        break;
-                    },
+                    Option::None(()) => { break; },
                 };
             };
 
@@ -167,9 +163,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                         }
                     }
                 },
-                Option::None(()) => {
-                    break;
-                },
+                Option::None(()) => { break; },
             };
         };
         best
@@ -185,9 +179,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                         break true;
                     }
                 },
-                Option::None(()) => {
-                    break false;
-                },
+                Option::None(()) => { break false; },
             };
         }
     }
@@ -236,6 +228,9 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     }
     #[inline(always)]
     fn output_byte(ref self: Lz77<ByteArray>, byte: u8) {
+        if byte == ESCAPE_BYTE {
+            self.output.append_byte(ESCAPE_BYTE);
+        }
         self.output.append_byte(byte);
         self.output_pos += 1;
     }
@@ -257,8 +252,10 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     fn output_match(ref self: Lz77<ByteArray>, m: Match) {
         let length: u8 = (m.length - MIN_MATCH_LEN).try_into().unwrap();
         let offset: u16 = (self.output_pos - m.start).try_into().unwrap();
-
+        //format: ESCAPE_BYTE then 0x00 then 1 length byte then 2 offset bytes
+        //ESCAPE_BYTE then 0x0 needed to distinguish from escaped byte
         self.output.append_byte(ESCAPE_BYTE);
+        self.output.append_byte(0x00);
         self.output.append_byte(length);
         self.output.append_byte((offset & 0xFF00).try_into().unwrap());
         self.output.append_byte((offset & 0xFF).try_into().unwrap());
@@ -266,7 +263,21 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         self.output_pos += m.length;
     }
     #[inline(always)]
+    fn is_escaped(ref self: Lz77<ByteArray>) -> bool {
+        match self.input.at(self.input_pos + 1) {
+            Option::Some(next_byte) => {
+                if next_byte == ESCAPE_BYTE {
+                    return true;
+                } else {
+                    return false;
+                }
+            },
+            Option::None => false,
+        }
+    }
+    #[inline(always)]
     fn decode_match(ref self: Lz77<ByteArray>) -> Match {
+        self.increment_pos();
         self.increment_pos();
         let length: usize = self.input_read().unwrap().into() + MIN_MATCH_LEN;
         self.increment_pos();
@@ -316,12 +327,8 @@ impl Lz77Encoder of Encoder<ByteArray> {
                             // create new matches
                             loop {
                                 match byte_pos.pop_front() {
-                                    Option::Some(pos) => {
-                                        lz77.create_match(*pos);
-                                    },
-                                    Option::None(()) => {
-                                        break;
-                                    },
+                                    Option::Some(pos) => { lz77.create_match(*pos); },
+                                    Option::None(()) => { break; },
                                 };
                             };
                         }
@@ -330,9 +337,7 @@ impl Lz77Encoder of Encoder<ByteArray> {
                     lz77.record_byte_pos(byte);
                     lz77.increment_pos();
                 },
-                Option::None(()) => {
-                    break;
-                },
+                Option::None(()) => { break; },
             };
         };
 
@@ -347,15 +352,18 @@ impl Lz77Decoder of Decoder<ByteArray> {
         loop {
             match lz77.input_read() {
                 Option::Some(byte) => {
-                    if byte != ESCAPE_BYTE {
-                        lz77.output_byte(byte);
+                    if byte == ESCAPE_BYTE {
+                        if lz77.is_escaped() {
+                            lz77.increment_pos();
+                            lz77.output_byte(byte);
+                        } else {
+                            lz77.output_decoded_match(lz77.decode_match());
+                        }
                     } else {
-                        lz77.output_decoded_match(lz77.decode_match());
+                        lz77.output_byte(byte);
                     }
                 },
-                Option::None => {
-                    break;
-                },
+                Option::None => { break; },
             }
             lz77.increment_pos();
         };
