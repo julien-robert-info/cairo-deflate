@@ -1,5 +1,4 @@
 use nullable::FromNullableResult;
-use dict::Felt252DictTrait;
 use integer::u32_overflowing_sub;
 use compression::commons::{ESCAPE_BYTE, Encoder, Decoder};
 
@@ -257,7 +256,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         self.output.append_byte(ESCAPE_BYTE);
         self.output.append_byte(0x00);
         self.output.append_byte(length);
-        self.output.append_byte((offset & 0xFF00).try_into().unwrap());
+        self.output.append_byte(((offset & 0xFF00) / 0x100).try_into().unwrap());
         self.output.append_byte((offset & 0xFF).try_into().unwrap());
 
         self.output_pos += m.length;
