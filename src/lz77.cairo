@@ -1,15 +1,15 @@
 use nullable::FromNullableResult;
 use integer::u32_overflowing_sub;
-use compression::commons::{ESCAPE_BYTE, Encoder, Decoder};
+use compression::commons::{Encoder, Decoder};
+use compression::offset_length_code::{
+    ESCAPE_BYTE, CODE_BYTE_COUNT, MIN_CODE_LEN, MAX_CODE_LEN, OLCode
+};
 
 const WINDOW_SIZE: usize = 32768;
-const MIN_MATCH_LEN: usize = 3;
-const MAX_MATCH_LEN: usize = 258;
 
 #[derive(Copy, Drop)]
 struct Match {
-    start: usize,
-    length: usize,
+    code: OLCode,
     pos: usize
 }
 
@@ -36,11 +36,11 @@ trait Lz77Trait<T> {
     fn is_active_matching(self: @Lz77<T>) -> bool;
     fn process_matches(ref self: Lz77<T>);
     fn output_byte(ref self: Lz77<T>, byte: u8);
-    fn output_raw_match(ref self: Lz77<T>, m: Match);
-    fn output_match(ref self: Lz77<T>, m: Match);
+    fn output_raw_code(ref self: Lz77<T>, code: OLCode);
+    fn output_code(ref self: Lz77<T>, code: OLCode);
     fn is_escaped(ref self: Lz77<T>) -> bool;
-    fn decode_match(ref self: Lz77<T>) -> Match;
-    fn output_decoded_match(ref self: Lz77<T>, m: Match);
+    fn read_code(ref self: Lz77<T>) -> OLCode;
+    fn output_from_code(ref self: Lz77<T>, code: OLCode);
 }
 
 impl Lz77Impl of Lz77Trait<ByteArray> {
@@ -103,12 +103,15 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     }
     #[inline(always)]
     fn create_match(ref self: Lz77<ByteArray>, start: usize) {
-        let m = Match { start: start, length: 1, pos: self.input_pos };
+        let m = Match {
+            code: OLCode { offset: self.input_pos - start, length: 1 }, pos: self.input_pos
+        };
         self.matches.append(m);
     }
     fn update_matches(ref self: Lz77<ByteArray>, byte: u8) {
         if !self.matches.is_empty() {
             let input_pos = self.input_pos;
+            let output_pos = self.output_pos;
             let window_start = self.window_start();
             let mut updated_matches: Array<Match> = array![];
             let mut matches = self.matches.span();
@@ -116,15 +119,18 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                 match matches.pop_front() {
                     Option::Some(m) => {
                         let m = *m;
-                        if m.start >= window_start {
+                        if input_pos - m.code.offset >= window_start {
                             let active = m.pos + 1 == input_pos;
-                            let next_byte = self.input.at(m.start + m.length).unwrap();
+                            let next_byte = self.input.at(m.pos - m.code.offset + 1).unwrap();
                             let updatable = next_byte == byte;
-                            if active && updatable && m.length < MAX_MATCH_LEN {
+                            if active && updatable && m.code.length < MAX_CODE_LEN {
                                 updated_matches
                                     .append(
                                         Match {
-                                            start: m.start, length: m.length + 1, pos: input_pos
+                                            code: OLCode {
+                                                offset: m.code.offset, length: m.code.length + 1
+                                            },
+                                            pos: input_pos
                                         }
                                     );
                             } else {
@@ -149,14 +155,16 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
 
                     match match_nullable(best) {
                         FromNullableResult::Null(()) => {
-                            if m.length >= MIN_MATCH_LEN {
+                            if m.code.length >= MIN_CODE_LEN {
                                 best = nullable_from_box(BoxTrait::new(m));
                             }
                         },
                         FromNullableResult::NotNull(best_m) => {
                             let best_m = best_m.unbox();
-                            if m.length > best_m.length
-                                || (m.length == best_m.length && m.start > best_m.start) {
+                            let longer = m.code.length > best_m.code.length;
+                            let closer = m.code.length == best_m.code.length
+                                && m.code.offset < best_m.code.offset;
+                            if longer || closer {
                                 best = nullable_from_box(BoxTrait::new(m));
                             }
                         }
@@ -191,31 +199,32 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                 FromNullableResult::Null(()) => {
                     //output raw sequence
                     self
-                        .output_raw_match(
-                            Match { start: output_pos, length: input_pos - output_pos, pos: 0 }
+                        .output_raw_code(
+                            OLCode {
+                                offset: input_pos - output_pos, length: input_pos - output_pos
+                            }
                         );
                 },
                 FromNullableResult::NotNull(best) => {
                     let best = best.unbox();
                     //output potential raw sequence before match
-                    if output_pos + best.length < best.pos + 1 {
+                    if output_pos + best.code.length < best.pos + 1 {
                         self
-                            .output_raw_match(
-                                Match {
-                                    start: output_pos,
-                                    length: best.pos + 1 - best.length - output_pos,
-                                    pos: 0
+                            .output_raw_code(
+                                OLCode {
+                                    offset: input_pos - output_pos,
+                                    length: best.pos + 1 - best.code.length - output_pos
                                 }
                             );
                     }
-                    //output match
-                    self.output_match(best);
+                    self.output_code(best.code);
                     //output potential raw sequence after match
                     if best.pos + 1 < input_pos {
                         self
-                            .output_raw_match(
-                                Match {
-                                    start: best.pos + 1, length: input_pos - (best.pos + 1), pos: 0
+                            .output_raw_code(
+                                OLCode {
+                                    offset: input_pos - (best.pos + 1),
+                                    length: input_pos - (best.pos + 1)
                                 }
                             );
                     }
@@ -233,14 +242,14 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         self.output.append_byte(byte);
         self.output_pos += 1;
     }
-    fn output_raw_match(ref self: Lz77<ByteArray>, m: Match) {
-        if m.length > 0 {
-            match self.input.at(m.start) {
+    fn output_raw_code(ref self: Lz77<ByteArray>, code: OLCode) {
+        if code.length > 0 {
+            match self.input.at(self.input_pos - code.offset) {
                 Option::Some(byte) => {
                     self.output_byte(byte);
                     self
-                        .output_raw_match(
-                            Match { start: m.start + 1, length: m.length - 1, pos: 0 }
+                        .output_raw_code(
+                            code: OLCode { offset: code.offset - 1, length: code.length - 1 }
                         );
                 },
                 Option::None => {},
@@ -248,18 +257,11 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         }
     }
     #[inline(always)]
-    fn output_match(ref self: Lz77<ByteArray>, m: Match) {
-        let length: u8 = (m.length - MIN_MATCH_LEN).try_into().unwrap();
-        let offset: u16 = (self.output_pos - m.start).try_into().unwrap();
-        //format: ESCAPE_BYTE then 0x00 then 1 length byte then 2 offset bytes
-        //ESCAPE_BYTE then 0x0 needed to distinguish from escaped byte
-        self.output.append_byte(ESCAPE_BYTE);
-        self.output.append_byte(0x00);
-        self.output.append_byte(length);
-        self.output.append_byte(((offset & 0xFF00) / 0x100).try_into().unwrap());
-        self.output.append_byte((offset & 0xFF).try_into().unwrap());
+    fn output_code(ref self: Lz77<ByteArray>, code: OLCode) {
+        let byte_code: ByteArray = code.into();
+        self.output.append(@byte_code);
 
-        self.output_pos += m.length;
+        self.output_pos += code.length;
     }
     #[inline(always)]
     fn is_escaped(ref self: Lz77<ByteArray>) -> bool {
@@ -275,25 +277,27 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         }
     }
     #[inline(always)]
-    fn decode_match(ref self: Lz77<ByteArray>) -> Match {
+    fn read_code(ref self: Lz77<ByteArray>) -> OLCode {
+        let byte_left = self.input.len() - self.input_pos;
+        assert(byte_left >= CODE_BYTE_COUNT, 'Not enougth bytes to read');
         self.increment_pos();
         self.increment_pos();
-        let length: usize = self.input_read().unwrap().into() + MIN_MATCH_LEN;
+        let length: usize = self.input_read().unwrap().into() + MIN_CODE_LEN;
         self.increment_pos();
         let mut offset: usize = self.input_read().unwrap().into();
         self.increment_pos();
         offset = offset * 256 + self.input_read().unwrap().into();
 
-        Match { start: self.output_pos - offset, length: length, pos: 0 }
+        OLCode { length: length, offset: offset }
     }
-    fn output_decoded_match(ref self: Lz77<ByteArray>, m: Match) {
-        if m.length > 0 {
-            match self.output.at(m.start) {
+    fn output_from_code(ref self: Lz77<ByteArray>, code: OLCode) {
+        if code.length > 0 {
+            match self.output.at(self.output_pos - code.offset) {
                 Option::Some(byte) => {
                     self.output_byte(byte);
                     self
-                        .output_decoded_match(
-                            Match { start: m.start + 1, length: m.length - 1, pos: 0 }
+                        .output_from_code(
+                            code: OLCode { length: code.length - 1, offset: code.offset }
                         );
                 },
                 Option::None => {},
@@ -356,7 +360,7 @@ impl Lz77Decoder of Decoder<ByteArray> {
                             lz77.increment_pos();
                             lz77.output_byte(byte);
                         } else {
-                            lz77.output_decoded_match(lz77.decode_match());
+                            lz77.output_from_code(lz77.read_code());
                         }
                     } else {
                         lz77.output_byte(byte);
