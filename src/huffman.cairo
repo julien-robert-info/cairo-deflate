@@ -1,4 +1,5 @@
 use dict::Felt252DictEntryTrait;
+use compression::utils::sorting;
 use compression::commons::{Encoder, Decoder};
 use compression::offset_length_code::{ESCAPE_BYTE, CODE_BYTE_COUNT};
 
@@ -202,6 +203,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         //create Code list and counts
         self.get_frequencies();
         //sort bytes
+        self.bytes = sorting::bubble_sort_dict_keys_desc(self.bytes, ref self.frequencies);
     //get codes length
     //assign code
     }
