@@ -1,8 +1,8 @@
-fn bubble_sort_dict_keys_desc<
+fn bubble_sort_dict_keys<
     T, +Copy<T>, +Drop<T>, +PartialEq<T>, +PartialOrd<T>, +Felt252DictValue<T>, +Destruct<T>
 >(
-    mut keys: Array<felt252>, ref dict: Felt252Dict<T>
-) -> Array<felt252> {
+    mut keys: Span<felt252>, ref dict: Felt252Dict<T>
+) -> Span<felt252> {
     if keys.len() <= 1 {
         return keys;
     }
@@ -17,7 +17,7 @@ fn bubble_sort_dict_keys_desc<
             if sorted_iteration == 0 {
                 break;
             }
-            keys = sorted_keys;
+            keys = sorted_keys.span();
             sorted_keys = array![];
             idx1 = 0;
             idx2 = 1;
@@ -28,7 +28,7 @@ fn bubble_sort_dict_keys_desc<
             let value1 = dict.get(*keys[idx1]);
             let value2 = dict.get(*keys[idx2]);
 
-            if value1 > value2 || (value1 == value2 && key1 < key2) {
+            if value1 < value2 || (value1 == value2 && key1 > key2) {
                 sorted_keys.append(*keys[idx1]);
                 idx1 = idx2;
                 idx2 += 1;
@@ -39,5 +39,5 @@ fn bubble_sort_dict_keys_desc<
             }
         };
     };
-    sorted_keys
+    sorted_keys.span()
 }
