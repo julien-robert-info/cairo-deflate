@@ -1,5 +1,6 @@
+use nullable::FromNullableResult;
 use dict::Felt252DictEntryTrait;
-use compression::utils::sorting;
+use compression::utils::{array_ext, sorting};
 use compression::commons::{Encoder, Decoder};
 use compression::offset_length_code::{ESCAPE_BYTE, CODE_BYTE_COUNT};
 
@@ -13,7 +14,7 @@ struct Huffman<T> {
     output: T,
     frequencies: Felt252Dict<usize>,
     codes_length: Felt252Dict<u8>,
-    codes: Felt252Dict<felt252>,
+    codes: Felt252Dict<u16>,
     bytes: Array<felt252>,
     input_pos: usize,
 }
@@ -28,6 +29,10 @@ trait HuffmanTrait<T> {
     fn get_length_code(self: @Huffman<T>, value: u16) -> felt252;
     fn get_offset_code(self: @Huffman<T>, value: u16) -> felt252;
     fn get_frequencies(ref self: Huffman<T>);
+    fn increment_codes_length(
+        ref self: Huffman<T>, node: felt252, ref merged: Felt252Dict<Nullable<Span<felt252>>>
+    ) -> Span<felt252>;
+    fn get_codes_length(ref self: Huffman<T>);
     fn set_codes(ref self: Huffman<T>);
 }
 
@@ -199,19 +204,80 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             Option::None(()) => (),
         }
     }
-    fn set_codes(ref self: Huffman<ByteArray>) {
-        //create Code list and counts
-        self.get_frequencies();
-        //sort bytes
-        self.bytes = sorting::bubble_sort_dict_keys_desc(self.bytes, ref self.frequencies);
-    //get codes length
-    //assign code
+    fn increment_codes_length(
+        ref self: Huffman<ByteArray>,
+        node: felt252,
+        ref merged: Felt252Dict<Nullable<Span<felt252>>>
+    ) -> Span<felt252> {
+        match match_nullable(merged.get(node)) {
+            //leave
+            FromNullableResult::Null(()) => {
+                let (entry, prev_value) = self.codes_length.entry(node);
+                self.codes_length = entry.finalize(prev_value + 1);
+
+                array![node].span()
+            },
+            //node
+            FromNullableResult::NotNull(leaves) => {
+                let mut leaves = leaves.unbox();
+                let ret = leaves;
+                loop {
+                    match leaves.pop_front() {
+                        Option::Some(leave) => {
+                            let (entry, prev_value) = self.codes_length.entry(*leave);
+                            self.codes_length = entry.finalize(prev_value + 1);
+                        },
+                        Option::None => { break; },
+                    }
+                };
+
+                ret
+            }
+        }
+    }
+    fn get_codes_length(ref self: Huffman<ByteArray>) {
+        let mut nodes = self.bytes.span();
+        let mut merged: Felt252Dict<Nullable<Span<felt252>>> = Default::default();
+
+        loop {
+            if nodes.len() <= 1 {
+                break;
+            }
+
+            //sort ASC on frequency value and ASC on key value
+            nodes = sorting::bubble_sort_dict_keys(nodes, ref self.frequencies);
+
+            match nodes.pop_front() {
+                Option::Some(node) => {
+                    let node1 = *node;
+                    let node2 = *nodes[0];
+
+                    //increment codes length and get sub leaves of merged nodes
+                    let merge1 = self.increment_codes_length(node1, ref merged);
+                    let merge2 = self.increment_codes_length(node2, ref merged);
+                    //keep merged leaves in memory
+                    let merge = array_ext::concat_span(merge1, merge2);
+                    merged.insert(node2, nullable_from_box(BoxTrait::new(merge)));
+                    //add frequencies of the two merged nodes
+                    let freq1 = self.frequencies.get(node1);
+                    let (entry, freq2) = self.frequencies.entry(node2);
+                    self.frequencies = entry.finalize(freq1 + freq2);
+                },
+                Option::None => (),
+            }
+        }
+    }
+    fn set_codes(ref self: Huffman<ByteArray>) { //get codes length frequencies
+    //set starting codes
+    //assign codes
     }
 }
 
 impl HuffmanEncoder of Encoder<ByteArray> {
     fn encode(data: ByteArray) -> ByteArray {
         let mut huffman = HuffmanImpl::new(@data);
+        huffman.get_frequencies();
+        huffman.get_codes_length();
         huffman.set_codes();
 
         huffman.output
