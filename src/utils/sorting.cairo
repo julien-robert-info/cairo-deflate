@@ -41,3 +41,39 @@ fn bubble_sort_dict_keys<
     };
     sorted_keys.span()
 }
+fn bubble_sort_elements(mut array: Span<felt252>) -> Span<felt252> {
+    if array.len() <= 1 {
+        return array;
+    }
+    let mut idx1 = 0;
+    let mut idx2 = 1;
+    let mut sorted_iteration = 0;
+    let mut sorted_array = array![];
+
+    loop {
+        if idx2 == array.len() {
+            sorted_array.append(*array[idx1]);
+            if sorted_iteration == 0 {
+                break;
+            }
+            array = sorted_array.span();
+            sorted_array = array![];
+            idx1 = 0;
+            idx2 = 1;
+            sorted_iteration = 0;
+        } else {
+            let val1: u256 = (*array[idx1]).into();
+            let val2: u256 = (*array[idx2]).into();
+            if val1 < val2 {
+                sorted_array.append(*array[idx1]);
+                idx1 = idx2;
+                idx2 += 1;
+            } else {
+                sorted_array.append(*array[idx2]);
+                idx2 += 1;
+                sorted_iteration = 1;
+            }
+        };
+    };
+    sorted_array.span()
+}
