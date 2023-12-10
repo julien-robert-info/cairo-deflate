@@ -59,7 +59,37 @@ fn get_codes_length() {
 }
 
 #[test]
-#[available_gas(300000000)]
+#[available_gas(3000000)]
+fn set_codes() {
+    let mut huffman = HuffmanImpl::new(@inputs::get_test_phrase_3());
+
+    huffman.bytes = array!['g', 'o', ' ', 'p', 'h', 'e', 'r', 's'];
+    huffman.codes_length.insert('g', 2);
+    huffman.codes_length.insert('o', 2);
+    huffman.codes_length.insert(' ', 3);
+    huffman.codes_length.insert('p', 4);
+    huffman.codes_length.insert('h', 4);
+    huffman.codes_length.insert('e', 3);
+    huffman.codes_length.insert('r', 4);
+    huffman.codes_length.insert('s', 4);
+
+    huffman.set_codes();
+
+    let codes = array![0, 1, 4, 13, 12, 5, 14, 15];
+
+    let mut i = 0;
+    loop {
+        if i >= huffman.bytes.len() - 1 {
+            break;
+        }
+
+        assert(huffman.codes.get(*huffman.bytes.at(i)) == *codes.at(i), 'unexpected code');
+        i += 1;
+    }
+}
+
+#[test]
+#[available_gas(15000000)]
 fn test_huffman() {
     let compressed = HuffmanEncoder::encode(inputs::get_test_phrase_3());
 // let decompressed = HuffmanDecoder::decode(compressed);

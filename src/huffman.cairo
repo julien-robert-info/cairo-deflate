@@ -267,9 +267,50 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             }
         }
     }
-    fn set_codes(ref self: Huffman<ByteArray>) { //get codes length frequencies
-    //set starting codes
-    //assign codes
+    fn set_codes(ref self: Huffman<ByteArray>) {
+        //get codes length frequencies
+        let mut codes_length_freq: Felt252Dict<u8> = Default::default();
+        let mut bytes = sorting::bubble_sort_dict_keys(self.bytes.span(), ref self.codes_length);
+        let mut codes_length = array![];
+        loop {
+            match bytes.pop_front() {
+                Option::Some(byte) => {
+                    let code_length = self.codes_length.get(*byte);
+                    let (entry, freq) = codes_length_freq.entry(code_length.into());
+                    if freq == 0 {
+                        codes_length.append(code_length);
+                    }
+                    codes_length_freq = entry.finalize(freq + 1);
+                },
+                Option::None => { break; },
+            }
+        };
+        //set starting codes
+        let mut start_codes: Felt252Dict<u16> = Default::default();
+        let mut c = 0;
+        loop {
+            match codes_length.pop_front() {
+                Option::Some(code_length) => {
+                    start_codes.insert(code_length.into(), c);
+                    c = (c + codes_length_freq.get(code_length.into()).into()) * 2;
+                },
+                Option::None => { break; },
+            }
+        };
+        //assign codes
+        let mut empty_dict: Felt252Dict<u8> = Default::default();
+        let mut bytes = sorting::bubble_sort_elements(self.bytes.span());
+        loop {
+            match bytes.pop_front() {
+                Option::Some(byte) => {
+                    let code_length = self.codes_length.get(*byte);
+                    let (entry, code) = start_codes.entry(code_length.into());
+                    self.codes.insert(*byte, code);
+                    start_codes = entry.finalize(code + 1);
+                },
+                Option::None => { break; },
+            }
+        };
     }
 }
 
