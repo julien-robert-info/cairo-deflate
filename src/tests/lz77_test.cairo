@@ -61,7 +61,6 @@ fn process_matches() {
     expected.append_byte(ESCAPE_BYTE);
     expected.append_byte(0);
     expected.append_byte(0);
-    expected.append_byte(0);
     expected.append_byte(5);
     expected.append_word('la', 2);
 

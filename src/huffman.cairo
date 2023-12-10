@@ -144,7 +144,6 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
     fn decode_length_offset(ref self: Huffman<ByteArray>) -> (u16, u16) {
         let byte_left = self.input.len() - self.input_pos;
         assert(byte_left >= CODE_BYTE_COUNT, 'Not enougth bytes to read');
-        self.input_pos += 1;
         let length: u16 = self.input_read().unwrap().into();
         let mut offset: u16 = self.input_read().unwrap().into();
         offset = offset * 256 + self.input_read().unwrap().into();

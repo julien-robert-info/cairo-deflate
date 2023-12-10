@@ -281,7 +281,6 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         let byte_left = self.input.len() - self.input_pos;
         assert(byte_left >= CODE_BYTE_COUNT, 'Not enougth bytes to read');
         self.increment_pos();
-        self.increment_pos();
         let length: usize = self.input_read().unwrap().into() + MIN_CODE_LEN;
         self.increment_pos();
         let mut offset: usize = self.input_read().unwrap().into();
