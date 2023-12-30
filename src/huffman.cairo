@@ -1,8 +1,11 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictEntryTrait;
-use compression::utils::{array_ext, sorting};
-use compression::commons::{Encoder, Decoder};
+use compression::utils::{dict_ext, sorting};
+use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
 use compression::offset_length_code::{ESCAPE_BYTE, CODE_BYTE_COUNT};
+use alexandria_math::pow;
+use alexandria_sorting::bubble_sort::bubble_sort_elements;
+use alexandria_data_structures::array_ext::{ArrayTraitExt, SpanTraitExt};
 
 const LENGTH_BYTE_START: usize = 257;
 
@@ -12,9 +15,9 @@ struct Huffman<T> {
     offset_codes: Array<u16>,
     input: @T,
     output: T,
-    frequencies: Felt252Dict<usize>,
+    frequencies: Felt252Dict<u32>,
     codes_length: Felt252Dict<u8>,
-    codes: Felt252Dict<u16>,
+    codes: Felt252Dict<u32>,
     bytes: Array<felt252>,
     input_pos: usize,
 }
@@ -151,10 +154,10 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         (length, offset)
     }
     fn get_length_code(self: @Huffman<ByteArray>, value: u16) -> felt252 {
-        let mut i: u32 = 0;
+        let mut i: usize = 0;
         let length_codes = self.length_codes;
         loop {
-            if value < *length_codes.at(i) {
+            if value < *length_codes[i] {
                 break;
             }
             i += 1;
@@ -166,7 +169,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         let mut i: u32 = 0;
         let offset_codes = self.offset_codes;
         loop {
-            if value < *offset_codes.at(i) {
+            if value < *offset_codes[i] {
                 break;
             }
             i += 1;
@@ -235,7 +238,8 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         }
     }
     fn get_codes_length(ref self: Huffman<ByteArray>) {
-        let mut nodes = self.bytes.span();
+        let mut frequencies = dict_ext::clone_from_keys(@self.bytes, ref self.frequencies);
+        let mut nodes = self.bytes.clone();
         let mut merged: Felt252Dict<Nullable<Span<felt252>>> = Default::default();
 
         loop {
@@ -243,12 +247,16 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                 break;
             }
 
-            //sort ASC on frequency value and ASC on key value
-            nodes = sorting::bubble_sort_dict_keys(nodes, ref self.frequencies);
+            //sort ASC on frequency value and DESC on key value
+            let mut sortable_nodes: Array<u128> = (@nodes).try_into().unwrap();
+            sortable_nodes = bubble_sort_elements(sortable_nodes);
+            sortable_nodes = sortable_nodes.reverse();
+            nodes = sortable_nodes.into();
+            nodes = sorting::bubble_sort_dict_keys(nodes, ref frequencies);
 
             match nodes.pop_front() {
                 Option::Some(node) => {
-                    let node1 = *node;
+                    let node1 = node;
                     let node2 = *nodes[0];
 
                     //increment codes length and get sub leaves of merged nodes
@@ -285,6 +293,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             }
         };
         //set starting codes
+        let mut start_codes: Felt252Dict<u32> = Default::default();
         let mut start_codes: Felt252Dict<u16> = Default::default();
         let mut c = 0;
         loop {
@@ -297,14 +306,14 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             }
         };
         //assign codes
-        let mut empty_dict: Felt252Dict<u8> = Default::default();
-        let mut bytes = sorting::bubble_sort_elements(self.bytes.span());
+        let bytes: Array<u128> = (@self.bytes).try_into().unwrap();
+        let mut bytes: Array<felt252> = bubble_sort_elements(bytes).into();
         loop {
             match bytes.pop_front() {
                 Option::Some(byte) => {
-                    let code_length = self.codes_length.get(*byte);
+                    let code_length = self.codes_length.get(byte);
                     let (entry, code) = start_codes.entry(code_length.into());
-                    self.codes.insert(*byte, code);
+                    self.codes.insert(byte, code);
                     start_codes = entry.finalize(code + 1);
                 },
                 Option::None => { break; },

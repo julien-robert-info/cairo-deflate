@@ -1,5 +1,5 @@
 mod utils {
-    mod array_ext;
+    mod dict_ext;
     mod sorting;
 }
 mod commons;

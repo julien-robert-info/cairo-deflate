@@ -4,6 +4,7 @@ use compression::commons::{Encoder, Decoder};
 use compression::offset_length_code::{
     ESCAPE_BYTE, CODE_BYTE_COUNT, MIN_CODE_LEN, MAX_CODE_LEN, OLCode
 };
+use alexandria_data_structures::array_ext::SpanTraitExt;
 
 const WINDOW_SIZE: usize = 32768;
 
@@ -85,16 +86,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
             FromNullableResult::Null(()) => arr_pos = array![input_pos],
             //known byte
             FromNullableResult::NotNull(span_pos) => {
-                let mut span_pos = span_pos.unbox();
-
-                //deref previous pos
-                loop {
-                    match span_pos.pop_front() {
-                        Option::Some(pos) => arr_pos.append(*pos),
-                        Option::None(()) => { break; },
-                    }
-                };
-                //append new pos
+                arr_pos = span_pos.unbox().dedup();
                 arr_pos.append(input_pos);
             }
         }
@@ -111,7 +103,6 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     fn update_matches(ref self: Lz77<ByteArray>, byte: u8) {
         if !self.matches.is_empty() {
             let input_pos = self.input_pos;
-            let output_pos = self.output_pos;
             let window_start = self.window_start();
             let mut updated_matches: Array<Match> = array![];
             let mut matches = self.matches.span();

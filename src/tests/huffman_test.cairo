@@ -20,13 +20,13 @@ fn get_frequencies() {
             break;
         }
 
-        assert(huffman.frequencies.get(*bytes.at(i)) == *frequencies.at(i), 'unexpected bytes');
+        assert(huffman.frequencies.get(*bytes[i]) == *frequencies[i], 'unexpected bytes');
         i += 1;
     }
 }
 
 #[test]
-#[available_gas(10000000)]
+#[available_gas(15000000)]
 fn get_codes_length() {
     let mut huffman = HuffmanImpl::new(@inputs::get_test_phrase_3());
 
@@ -51,7 +51,7 @@ fn get_codes_length() {
         }
 
         assert(
-            huffman.codes_length.get(*huffman.bytes.at(i)) == *codes_length.at(i),
+            huffman.codes_length.get(*huffman.bytes[i]) == *codes_length[i],
             'unexpected code length'
         );
         i += 1;
@@ -83,7 +83,7 @@ fn set_codes() {
             break;
         }
 
-        assert(huffman.codes.get(*huffman.bytes.at(i)) == *codes.at(i), 'unexpected code');
+        assert(huffman.codes.get(*huffman.bytes[i]) == *codes[i], 'unexpected code');
         i += 1;
     }
 }
