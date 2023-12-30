@@ -20,6 +20,7 @@ struct Huffman<T> {
     codes: Felt252Dict<u32>,
     bytes: Array<felt252>,
     input_pos: usize,
+    max_code_length: u8
 }
 
 trait HuffmanTrait<T> {
@@ -32,9 +33,8 @@ trait HuffmanTrait<T> {
     fn get_length_code(self: @Huffman<T>, value: u16) -> felt252;
     fn get_offset_code(self: @Huffman<T>, value: u16) -> felt252;
     fn get_frequencies(ref self: Huffman<T>);
-    fn increment_codes_length(
-        ref self: Huffman<T>, node: felt252, ref merged: Felt252Dict<Nullable<Span<felt252>>>
-    ) -> Span<felt252>;
+    fn increment_codes_length(ref self: Huffman<T>, nodes: Span<felt252>) -> bool;
+    fn get_codes_length_frequencies(ref self: Huffman<T>) -> Felt252Dict<u8>;
     fn get_codes_length(ref self: Huffman<T>);
     fn set_codes(ref self: Huffman<T>);
 }
@@ -121,6 +121,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             codes: Default::default(),
             bytes: array![],
             input_pos: 0,
+            max_code_length: 15
         }
     }
     #[inline(always)]
@@ -206,36 +207,43 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             Option::None(()) => (),
         }
     }
-    fn increment_codes_length(
-        ref self: Huffman<ByteArray>,
-        node: felt252,
-        ref merged: Felt252Dict<Nullable<Span<felt252>>>
-    ) -> Span<felt252> {
-        match match_nullable(merged.get(node)) {
-            //leave
-            FromNullableResult::Null(()) => {
-                let (entry, prev_value) = self.codes_length.entry(node);
-                self.codes_length = entry.finalize(prev_value + 1);
-
-                array![node].span()
+    fn increment_codes_length(ref self: Huffman<ByteArray>, nodes: Span<felt252>) -> bool {
+        let mut nodes = nodes;
+        let mut max_length_reached = false;
+        match nodes.pop_front() {
+            Option::Some(node) => {
+                let (entry, mut code_length) = self.codes_length.entry(*node);
+                if code_length < self.max_code_length {
+                    code_length += 1;
+                } else {
+                    max_length_reached = true;
+                }
+                self.codes_length = entry.finalize(code_length);
+                let max_length_reached_r = self.increment_codes_length(nodes);
+                max_length_reached = max_length_reached || max_length_reached_r;
             },
-            //node
-            FromNullableResult::NotNull(leaves) => {
-                let mut leaves = leaves.unbox();
-                let ret = leaves;
-                loop {
-                    match leaves.pop_front() {
-                        Option::Some(leave) => {
-                            let (entry, prev_value) = self.codes_length.entry(*leave);
-                            self.codes_length = entry.finalize(prev_value + 1);
-                        },
-                        Option::None => { break; },
-                    }
-                };
-
-                ret
-            }
+            Option::None(()) => (),
         }
+
+        max_length_reached
+    }
+    fn get_codes_length_frequencies(ref self: Huffman<ByteArray>) -> Felt252Dict<u8> {
+        let mut codes_length_freq: Felt252Dict<u8> = Default::default();
+        let mut bytes = self.bytes.clone();
+        bytes = sorting::bubble_sort_dict_keys(bytes, ref self.codes_length);
+
+        loop {
+            match bytes.pop_front() {
+                Option::Some(byte) => {
+                    let code_length = self.codes_length.get(byte);
+                    let (entry, freq) = codes_length_freq.entry(code_length.into());
+                    codes_length_freq = entry.finalize(freq + 1);
+                },
+                Option::None => { break; },
+            }
+        };
+
+        codes_length_freq
     }
     fn get_codes_length(ref self: Huffman<ByteArray>) {
         let mut frequencies = dict_ext::clone_from_keys(@self.bytes, ref self.frequencies);
@@ -259,51 +267,95 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                     let node1 = node;
                     let node2 = *nodes[0];
 
-                    //increment codes length and get sub leaves of merged nodes
-                    let merge1 = self.increment_codes_length(node1, ref merged);
-                    let merge2 = self.increment_codes_length(node2, ref merged);
-                    //keep merged leaves in memory
-                    let merge = array_ext::concat_span(merge1, merge2);
-                    merged.insert(node2, nullable_from_box(BoxTrait::new(merge)));
-                    //add frequencies of the two merged nodes
-                    let freq1 = self.frequencies.get(node1);
-                    let (entry, freq2) = self.frequencies.entry(node2);
-                    self.frequencies = entry.finalize(freq1 + freq2);
+                    //combine frequencies of the two merged nodes
+                    let freq1 = frequencies.get(node1);
+                    let (entry, freq2) = frequencies.entry(node2);
+                    frequencies = entry.finalize(freq1 + freq2);
+
+                    //combine merged leaves
+                    let merge1 = match match_nullable(merged.get(node1)) {
+                        FromNullableResult::Null(()) => array![node1].span(),
+                        FromNullableResult::NotNull(leaves) => leaves.unbox()
+                    };
+                    let (entry, merge2) = merged.entry(node2);
+                    let merge2 = match match_nullable(merge2) {
+                        FromNullableResult::Null(()) => array![node2].span(),
+                        FromNullableResult::NotNull(leaves) => leaves.unbox()
+                    };
+                    let mut merge = merge1.concat(merge2).dedup();
+                    //sort by code length DESC, frequency ASC
+                    merge = sorting::bubble_sort_dict_keys(merge, ref self.frequencies);
+                    merge = merge.reverse();
+                    merge = sorting::bubble_sort_dict_keys(merge, ref self.codes_length);
+                    merge = merge.reverse();
+
+                    merged = entry.finalize(nullable_from_box(BoxTrait::new(merge.span())));
+
+                    //increment codes length of merged leaves
+                    let max_length_reached = self.increment_codes_length(merge.span());
+                    //if max_code_length reached, verify node structure
+                    if max_length_reached {
+                        let mut codes_length_freq = self.get_codes_length_frequencies();
+                        let mut i: u16 = self.max_code_length.into();
+                        let mut prev_s = pow(2, i) * 2;
+                        loop {
+                            if i == 0 {
+                                break;
+                            }
+                            let n: u16 = codes_length_freq.get(i.into()).into();
+                            let mut s = (prev_s / 2) - n;
+                            // if starting code for length n is not even
+                            if s & 1 != 0 {
+                                //elevate next least frequent symbol
+                                let mut merge_span = merge.span();
+                                loop {
+                                    match merge_span.pop_front() {
+                                        Option::Some(node) => {
+                                            let node = *node;
+                                            let code_length: u16 = self
+                                                .codes_length
+                                                .get(node)
+                                                .into();
+
+                                            if code_length == (i - 1) {
+                                                self.increment_codes_length(array![node].span());
+
+                                                codes_length_freq = self
+                                                    .get_codes_length_frequencies();
+                                                i = (self.max_code_length + 1).into();
+                                                s = pow(2, i) * 2;
+                                                break;
+                                            }
+                                        },
+                                        Option::None => { break; },
+                                    };
+                                };
+                            }
+                            prev_s = s;
+                            i -= 1;
+                        };
+                    }
                 },
                 Option::None => (),
             }
         }
     }
     fn set_codes(ref self: Huffman<ByteArray>) {
-        //get codes length frequencies
-        let mut codes_length_freq: Felt252Dict<u8> = Default::default();
-        let mut bytes = sorting::bubble_sort_dict_keys(self.bytes.span(), ref self.codes_length);
-        let mut codes_length = array![];
-        loop {
-            match bytes.pop_front() {
-                Option::Some(byte) => {
-                    let code_length = self.codes_length.get(*byte);
-                    let (entry, freq) = codes_length_freq.entry(code_length.into());
-                    if freq == 0 {
-                        codes_length.append(code_length);
-                    }
-                    codes_length_freq = entry.finalize(freq + 1);
-                },
-                Option::None => { break; },
-            }
-        };
+        let mut codes_length_freq = self.get_codes_length_frequencies();
         //set starting codes
         let mut start_codes: Felt252Dict<u32> = Default::default();
-        let mut start_codes: Felt252Dict<u16> = Default::default();
-        let mut c = 0;
+        let mut code: u32 = 0;
+        let mut i = 0;
         loop {
-            match codes_length.pop_front() {
-                Option::Some(code_length) => {
-                    start_codes.insert(code_length.into(), c);
-                    c = (c + codes_length_freq.get(code_length.into()).into()) * 2;
-                },
-                Option::None => { break; },
+            if i > self.max_code_length {
+                break;
             }
+            let code_length_freq = codes_length_freq.get(i.into());
+            if code_length_freq != 0 {
+                start_codes.insert(i.into(), code);
+            }
+            code = (code + code_length_freq.into()) * 2;
+            i += 1;
         };
         //assign codes
         let bytes: Array<u128> = (@self.bytes).try_into().unwrap();
