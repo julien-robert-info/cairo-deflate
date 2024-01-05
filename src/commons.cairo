@@ -8,8 +8,8 @@ trait Decoder<T> {
 
 impl ArrayInto<
     T, U, +Copy<T>, +Copy<U>, +Drop<T>, +Drop<U>, +Into<T, U>
-> of Into<Array<T>, Array<U>> {
-    fn into(self: Array<T>) -> Array<U> {
+> of Into<@Array<T>, Array<U>> {
+    fn into(self: @Array<T>) -> Array<U> {
         let mut span = self.span();
         let mut result: Array<U> = array![];
 
