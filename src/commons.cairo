@@ -45,36 +45,4 @@ impl ArrayTryInto<
         }
     }
 }
-// impl Felt252PartialOrd of PartialOrd<felt252> {
-//     #[inline(always)]
-//     fn le(lhs: felt252, rhs: felt252) -> bool {
-//         let lhs: u256 = lhs.into();
-//         let rhs: u256 = rhs.into();
-//         !(rhs < lhs)
-//     }
-//     #[inline(always)]
-//     fn ge(lhs: felt252, rhs: felt252) -> bool {
-//         let lhs: u256 = lhs.into();
-//         let rhs: u256 = rhs.into();
-//         !(lhs < rhs)
-//     }
-//     fn lt(lhs: felt252, rhs: felt252) -> bool {
-//         let lhs: u256 = lhs.into();
-//         let rhs: u256 = rhs.into();
-//         if lhs.high < rhs.high {
-//             true
-//         } else if lhs.high == rhs.high {
-//             lhs.low < rhs.low
-//         } else {
-//             false
-//         }
-//     }
-//     #[inline(always)]
-//     fn gt(lhs: felt252, rhs: felt252) -> bool {
-//         let lhs: u256 = lhs.into();
-//         let rhs: u256 = rhs.into();
-//         rhs < lhs
-//     }
-// }
-
 

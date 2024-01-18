@@ -1,31 +1,49 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictEntryTrait;
+use integer::u32_overflowing_sub;
 use compression::utils::sorting;
 use compression::utils::dict_ext::{DictWithKeys, clone_from_keys};
 use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
-use compression::offset_length_code::{ESCAPE_BYTE, CODE_BYTE_COUNT};
+use compression::offset_length_code::{
+    ESCAPE_BYTE, CODE_BYTE_COUNT, MIN_CODE_LEN, OLCode, OLCodeImpl
+};
 use alexandria_math::pow;
 use alexandria_sorting::bubble_sort::bubble_sort_elements;
 use alexandria_data_structures::array_ext::{ArrayTraitExt, SpanTraitExt};
 
-const LENGTH_BYTE_START: usize = 257;
+const LENGTH_BYTE_START: u32 = 257;
+const END_OF_BLOCK: felt252 = 256;
+
+#[derive(Destruct)]
+struct HuffmanTable {
+    symbols: Array<felt252>,
+    codes_length: Felt252Dict<u8>,
+    codes: Felt252Dict<u32>
+}
+
+impl HuffmanTableDefault of Default<HuffmanTable> {
+    #[inline(always)]
+    fn default() -> HuffmanTable {
+        HuffmanTable {
+            symbols: array![], codes_length: Default::default(), codes: Default::default()
+        }
+    }
+}
 
 #[derive(Destruct)]
 struct Huffman<T> {
     input: @T,
+    litterals: HuffmanTable,
+    offsets: HuffmanTable,
     output: T,
     input_pos: usize
 }
 
 trait HuffmanTrait<T> {
-    fn get_length_codes(self: @Huffman<T>) -> Array<u16>;
-    fn get_offset_codes(self: @Huffman<T>) -> Array<u16>;
     fn new(input: @T) -> Huffman<T>;
     fn input_read(ref self: Huffman<T>) -> Option<u8>;
     fn is_escaped(ref self: Huffman<T>) -> bool;
-    fn decode_length_offset(ref self: Huffman<T>) -> (u16, u16);
-    fn to_length_code(self: @Huffman<T>, value: u16) -> felt252;
-    fn to_offset_code(self: @Huffman<T>, value: u16) -> felt252;
+    fn read_code(ref self: Huffman<T>) -> OLCode;
     fn get_frequencies(
         ref self: Huffman<T>, ref bytes: DictWithKeys<u32>, ref offset_codes: DictWithKeys<u32>
     );
@@ -44,81 +62,19 @@ trait HuffmanTrait<T> {
     fn set_codes(
         ref self: Huffman<T>, ref codes_length: DictWithKeys<u8>, max_code_length: u8
     ) -> Felt252Dict<u32>;
+    fn init_tables(ref self: Huffman<T>, max_code_length: u8, max_offset_code_length: u8);
 }
 
 impl HuffmanImpl of HuffmanTrait<ByteArray> {
     #[inline(always)]
-    fn get_length_codes(self: @Huffman<ByteArray>) -> Array<u16> {
-        array![
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            10,
-            12,
-            14,
-            16,
-            20,
-            24,
-            28,
-            32,
-            40,
-            48,
-            56,
-            64,
-            80,
-            96,
-            112,
-            128,
-            160,
-            192,
-            224,
-            254,
-            255
-        ]
-    }
-    #[inline(always)]
-    fn get_offset_codes(self: @Huffman<ByteArray>) -> Array<u16> {
-        array![
-            2,
-            3,
-            4,
-            5,
-            7,
-            9,
-            13,
-            17,
-            25,
-            33,
-            49,
-            65,
-            97,
-            129,
-            193,
-            257,
-            385,
-            513,
-            769,
-            1025,
-            1537,
-            2049,
-            3073,
-            4097,
-            6145,
-            8193,
-            12289,
-            16385,
-            24577,
-            32769
-        ]
-    }
-    #[inline(always)]
     fn new(input: @ByteArray) -> Huffman<ByteArray> {
-        Huffman { input: input, output: Default::default(), input_pos: 0 }
+        Huffman {
+            input: input,
+            litterals: Default::default(),
+            offsets: Default::default(),
+            output: Default::default(),
+            input_pos: 0
+        }
     }
     #[inline(always)]
     fn input_read(ref self: Huffman<ByteArray>) -> Option<u8> {
@@ -141,38 +97,14 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         }
     }
     #[inline(always)]
-    fn decode_length_offset(ref self: Huffman<ByteArray>) -> (u16, u16) {
+    fn read_code(ref self: Huffman<ByteArray>) -> OLCode {
         let byte_left = self.input.len() - self.input_pos;
         assert(byte_left >= CODE_BYTE_COUNT, 'Not enougth bytes to read');
-        let length: u16 = self.input_read().unwrap().into();
-        let mut offset: u16 = self.input_read().unwrap().into();
+        let length: usize = self.input_read().unwrap().into();
+        let mut offset: usize = self.input_read().unwrap().into();
         offset = offset * 256 + self.input_read().unwrap().into();
 
-        (length, offset)
-    }
-    fn to_length_code(self: @Huffman<ByteArray>, value: u16) -> felt252 {
-        let mut i: usize = 0;
-        let length_codes = self.get_length_codes();
-        loop {
-            if value < *length_codes[i] {
-                break;
-            }
-            i += 1;
-        };
-
-        (LENGTH_BYTE_START + i).into()
-    }
-    fn to_offset_code(self: @Huffman<ByteArray>, value: u16) -> felt252 {
-        let mut i: u32 = 0;
-        let offset_codes = self.get_offset_codes();
-        loop {
-            if value < *offset_codes[i] {
-                break;
-            }
-            i += 1;
-        };
-
-        i.into()
+        OLCode { length: length, offset: offset }
     }
     fn get_frequencies(
         ref self: Huffman<ByteArray>,
@@ -183,19 +115,30 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             Option::Some(byte) => {
                 let felt_byte: felt252 = byte.into();
 
-                if byte == ESCAPE_BYTE && !self.is_escaped() {
-                    // get length and offset codes
-                    let (length, offset) = self.decode_length_offset();
-                    let length_code = self.to_length_code(length);
-                    let offset_code = self.to_offset_code(offset);
-                    //increment length and offset codes frequency
-                    let (entry, prev_value) = bytes.dict.entry(length_code);
-                    bytes.dict = entry.finalize(prev_value + 1);
-                    let (entry, prev_value) = offset_codes.dict.entry(offset_code);
-                    if prev_value == 0 {
-                        offset_codes.keys.append(offset_code);
+                if byte == ESCAPE_BYTE {
+                    if !self.is_escaped() {
+                        // get length and offset codes
+                        let sequence = self.read_code();
+                        let length_code = sequence.get_length_code();
+                        let offset_code = sequence.get_offset_code();
+                        //increment length and offset codes frequency
+                        let (entry, prev_value) = bytes
+                            .dict
+                            .entry((length_code + LENGTH_BYTE_START).into());
+                        bytes.dict = entry.finalize(prev_value + 1);
+                        let (entry, prev_value) = offset_codes.dict.entry(offset_code.into());
+                        if prev_value == 0 {
+                            offset_codes.keys.append(offset_code.into());
+                        }
+                        offset_codes.dict = entry.finalize(prev_value + 1);
+                    } else {
+                        let (entry, prev_value) = bytes.dict.entry(felt_byte);
+                        if prev_value == 0 {
+                            bytes.keys.append(felt_byte);
+                        }
+                        bytes.dict = entry.finalize(prev_value + 2);
+                        self.input_pos += 1;
                     }
-                    offset_codes.dict = entry.finalize(prev_value + 1);
                 } else {
                     //increment byte frequency
                     let (entry, prev_value) = bytes.dict.entry(felt_byte);
@@ -402,30 +345,47 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
         codes
     }
-}
-
-impl HuffmanEncoder of Encoder<ByteArray> {
-    fn encode(data: ByteArray) -> ByteArray {
-        let mut huffman = HuffmanImpl::new(@data);
-
+    fn init_tables(ref self: Huffman<ByteArray>, max_code_length: u8, max_offset_code_length: u8) {
         let mut bytes_freq: DictWithKeys<u32> = Default::default();
         let mut offset_codes_freq: DictWithKeys<u32> = Default::default();
-        huffman.get_frequencies(ref bytes_freq, ref offset_codes_freq);
+        self.get_frequencies(ref bytes_freq, ref offset_codes_freq);
 
-        let max_code_length = 15;
-        let bytes_codes_length = huffman.get_codes_length(ref bytes_freq, max_code_length);
+        bytes_freq.keys.append(END_OF_BLOCK);
+        bytes_freq.dict.insert(END_OF_BLOCK, 1);
+
+        let bytes_codes_length = self.get_codes_length(ref bytes_freq, max_code_length);
         let mut bytes_codes_length = DictWithKeys {
             dict: bytes_codes_length, keys: bytes_freq.keys.clone()
         };
-        let mut bytes_codes = huffman.set_codes(ref bytes_codes_length, max_code_length);
+        let mut bytes_codes = self.set_codes(ref bytes_codes_length, max_code_length);
+        self
+            .litterals =
+                HuffmanTable {
+                    symbols: bytes_freq.keys,
+                    codes_length: bytes_codes_length.dict,
+                    codes: bytes_codes
+                };
 
-        let max_offset_code_length = 7;
-        let mut offset_codes_length = huffman
+        let mut offset_codes_length = self
             .get_codes_length(ref offset_codes_freq, max_offset_code_length);
         let mut offset_codes_length = DictWithKeys {
-            dict: offset_codes_length, keys: bytes_freq.keys.clone()
+            dict: offset_codes_length, keys: offset_codes_freq.keys.clone()
         };
-        let mut offset_codes = huffman.set_codes(ref offset_codes_length, max_offset_code_length);
+        let mut offset_codes = self.set_codes(ref offset_codes_length, max_offset_code_length);
+        self
+            .offsets =
+                HuffmanTable {
+                    symbols: offset_codes_freq.keys,
+                    codes_length: offset_codes_length.dict,
+                    codes: offset_codes
+                };
+    }
+}
+impl HuffmanEncoder of Encoder<ByteArray> {
+    fn encode(data: ByteArray) -> ByteArray {
+        let mut huffman = HuffmanImpl::new(@data);
+        let max_code_length = 15;
+        huffman.init_tables(max_code_length, max_code_length);
 
         huffman.output
     }
