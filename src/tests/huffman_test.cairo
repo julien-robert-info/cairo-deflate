@@ -4,7 +4,7 @@ use compression::utils::dict_ext::DictWithKeys;
 use compression::huffman::{HuffmanEncoder, HuffmanDecoder, HuffmanImpl};
 
 #[test]
-#[available_gas(4500000)]
+#[available_gas(5000000)]
 fn get_frequencies() {
     let mut huffman = HuffmanImpl::new(@inputs::get_test_phrase_3());
     let mut bytes_freq: DictWithKeys<u32> = Default::default();
@@ -94,7 +94,7 @@ fn set_codes() {
 }
 
 #[test]
-#[available_gas(60000000)]
+#[available_gas(70000000)]
 fn max_code_length() {
     let mut huffman = HuffmanImpl::new(@Default::default());
 
@@ -121,7 +121,7 @@ fn max_code_length() {
 
     let mut codes_length = huffman.get_codes_length(ref bytes_freq, max_code_length);
 
-    let expected_codes_length = array![5, 6, 4, 6, 6, 7, 2, 2, 5, 5, 6, 7, 7, 7, 2].span();
+    let expected_codes_length = array![5, 7, 4, 6, 6, 6, 2, 2, 5, 5, 6, 7, 7, 7, 2].span();
     //without tree correction
     // let expected_codes_length = array![5, 6, 4, 6, 6, 6, 2, 2, 5, 5, 6, 7, 8, 8, 2].span();
 
@@ -139,7 +139,7 @@ fn max_code_length() {
     let mut codes_length = DictWithKeys { dict: codes_length, keys: bytes_freq.keys };
     let mut codes = huffman.set_codes(ref codes_length, 7);
 
-    let expected_codes = array![26, 58, 12, 59, 60, 124, 0, 1, 27, 28, 61, 125, 126, 127, 2];
+    let expected_codes = array![26, 124, 12, 58, 59, 60, 0, 1, 27, 28, 61, 125, 126, 127, 2];
     //without tree correction
     // let expected_codes = array![26, 58, 12, 59, 60, 61, 0, 1, 27, 28, 62, 126, 254, 255, 2];
 
@@ -155,7 +155,7 @@ fn max_code_length() {
 }
 
 #[test]
-#[available_gas(600000000)]
+#[available_gas(700000000)]
 fn test_huffman() {
     let compressed = HuffmanEncoder::encode(inputs::get_test_phrase_2());
 // let decompressed = HuffmanDecoder::decode(compressed);

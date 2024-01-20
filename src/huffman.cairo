@@ -1,6 +1,6 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictEntryTrait;
-use integer::u32_overflowing_sub;
+use integer::{u16_overflowing_sub, u32_overflowing_sub};
 use compression::utils::sorting;
 use compression::utils::dict_ext::{DictWithKeys, clone_from_keys};
 use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
@@ -216,29 +216,22 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         bytes: @Array<felt252>,
         max_code_length: u8
     ) {
-        'adjust_tree_structure'.print();
         let mut codes_length_freq = self.get_codes_length_frequencies(ref codes_length, bytes);
         let mut i: u16 = max_code_length.into();
         let mut prev_s = pow(2, i) * 2;
+
         loop {
             if i == 0 {
                 break;
             }
-            'i'.print();
-            i.print();
-            // 'prev_s'.print();
-            // prev_s.print();
             let n: u16 = codes_length_freq.get(i.into()).into();
-            'prev_s'.print();
-            prev_s.print();
-            'n'.print();
-            n.print();
-            let mut s = (prev_s / 2) - n;
-            's'.print();
-            s.print();
+            let mut s = match u16_overflowing_sub((prev_s / 2), n) {
+                Result::Ok(x) => x,
+                Result::Err(x) => 1,
+            };
+
             // if starting code for length n is not even
             if s & 1 != 0 {
-                's not even'.print();
                 //elevate next least frequent symbol
                 let mut bytes_span = bytes.span();
                 loop {
@@ -248,8 +241,6 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                             let code_length: u16 = codes_length.get(node).into();
 
                             if code_length < i {
-                                'elevate'.print();
-                                node.print();
                                 self
                                     .increment_codes_length(
                                         ref codes_length, array![node].span(), max_code_length
@@ -325,7 +316,14 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                         .increment_codes_length(ref codes_length, merge.span(), max_code_length);
 
                     if max_length_reached {
-                        self.adjust_tree_structure(ref codes_length, keys, max_code_length);
+                        let mut keys = sorting::bubble_sort_dict_keys(
+                            keys.span().dedup(), ref frequencies.dict
+                        );
+                        keys = keys.reverse();
+                        keys = sorting::bubble_sort_dict_keys(keys, ref codes_length);
+                        keys = keys.reverse();
+
+                        self.adjust_tree_structure(ref codes_length, @keys, max_code_length);
                     }
                 },
                 Option::None => (),
