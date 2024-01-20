@@ -50,24 +50,28 @@ trait HuffmanTrait<T> {
         ref self: Huffman<T>, ref bytes: DictWithKeys<u32>, ref offset_codes: DictWithKeys<u32>
     );
     fn increment_codes_length(
-        ref self: Huffman<T>,
+        self: @Huffman<T>,
         ref codes_length: Felt252Dict<u8>,
         nodes: Span<felt252>,
         max_code_length: u8
     ) -> bool;
     fn get_codes_length_frequencies(
-        ref self: Huffman<T>, ref codes_length: Felt252Dict<u8>, bytes: @Array<felt252>
+        self: @Huffman<T>, ref codes_length: Felt252Dict<u8>, bytes: @Array<felt252>
     ) -> Felt252Dict<u8>;
+    fn adjust_tree_structure(
+        self: @Huffman<T>,
+        ref codes_length: Felt252Dict<u8>,
+        bytes: @Array<felt252>,
+        max_code_length: u8
+    );
     fn get_codes_length(
-        ref self: Huffman<T>, ref frequencies: DictWithKeys<u32>, max_code_length: u8
+        self: @Huffman<T>, ref frequencies: DictWithKeys<u32>, max_code_length: u8
     ) -> Felt252Dict<u8>;
     fn set_codes(
-        ref self: Huffman<T>, ref codes_length: DictWithKeys<u8>, max_code_length: u8
+        self: @Huffman<T>, ref codes_length: DictWithKeys<u8>, max_code_length: u8
     ) -> Felt252Dict<u32>;
-    fn init_tables(
-        ref self: Huffman<T>, max_code_length: u8, max_offset_code_length: u8, max_bit_length: u8
-    );
-    fn bit_length_table(ref self: Huffman<T>, max_bit_length: u8);
+    fn init_tables(ref self: Huffman<T>, max_code_length: u8);
+    fn bit_length_table(ref self: Huffman<T>, hlit: usize, hdist: usize, max_bit_length: u8);
 }
 
 impl HuffmanImpl of HuffmanTrait<ByteArray> {
@@ -160,7 +164,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         }
     }
     fn increment_codes_length(
-        ref self: Huffman<ByteArray>,
+        self: @Huffman<ByteArray>,
         ref codes_length: Felt252Dict<u8>,
         nodes: Span<felt252>,
         max_code_length: u8
@@ -188,7 +192,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         max_length_reached
     }
     fn get_codes_length_frequencies(
-        ref self: Huffman<ByteArray>, ref codes_length: Felt252Dict<u8>, bytes: @Array<felt252>,
+        self: @Huffman<ByteArray>, ref codes_length: Felt252Dict<u8>, bytes: @Array<felt252>,
     ) -> Felt252Dict<u8> {
         let mut codes_length_freq: Felt252Dict<u8> = Default::default();
         let mut bytes = bytes.span();
@@ -206,8 +210,68 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
         codes_length_freq
     }
+    fn adjust_tree_structure(
+        self: @Huffman<ByteArray>,
+        ref codes_length: Felt252Dict<u8>,
+        bytes: @Array<felt252>,
+        max_code_length: u8
+    ) {
+        'adjust_tree_structure'.print();
+        let mut codes_length_freq = self.get_codes_length_frequencies(ref codes_length, bytes);
+        let mut i: u16 = max_code_length.into();
+        let mut prev_s = pow(2, i) * 2;
+        loop {
+            if i == 0 {
+                break;
+            }
+            'i'.print();
+            i.print();
+            // 'prev_s'.print();
+            // prev_s.print();
+            let n: u16 = codes_length_freq.get(i.into()).into();
+            'prev_s'.print();
+            prev_s.print();
+            'n'.print();
+            n.print();
+            let mut s = (prev_s / 2) - n;
+            's'.print();
+            s.print();
+            // if starting code for length n is not even
+            if s & 1 != 0 {
+                's not even'.print();
+                //elevate next least frequent symbol
+                let mut bytes_span = bytes.span();
+                loop {
+                    match bytes_span.pop_front() {
+                        Option::Some(node) => {
+                            let node = *node;
+                            let code_length: u16 = codes_length.get(node).into();
+
+                            if code_length < i {
+                                'elevate'.print();
+                                node.print();
+                                self
+                                    .increment_codes_length(
+                                        ref codes_length, array![node].span(), max_code_length
+                                    );
+
+                                codes_length_freq = self
+                                    .get_codes_length_frequencies(ref codes_length, bytes);
+                                i = (max_code_length + 1).into();
+                                s = pow(2, i) * 2;
+                                break;
+                            }
+                        },
+                        Option::None => { break; },
+                    };
+                };
+            }
+            prev_s = s;
+            i -= 1;
+        };
+    }
     fn get_codes_length(
-        ref self: Huffman<ByteArray>, ref frequencies: DictWithKeys<u32>, max_code_length: u8
+        self: @Huffman<ByteArray>, ref frequencies: DictWithKeys<u32>, max_code_length: u8
     ) -> Felt252Dict<u8> {
         let mut codes_length: Felt252Dict<u8> = Default::default();
         let keys = @frequencies.keys;
@@ -259,52 +323,9 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                     //increment codes length of merged leaves
                     let max_length_reached = self
                         .increment_codes_length(ref codes_length, merge.span(), max_code_length);
-                    //if max_code_length reached, verify node structure
+
                     if max_length_reached {
-                        let mut codes_length_freq = self
-                            .get_codes_length_frequencies(ref codes_length, keys);
-                        let mut i: u16 = max_code_length.into();
-                        let mut prev_s = pow(2, i) * 2;
-                        loop {
-                            if i == 0 {
-                                break;
-                            }
-                            let n: u16 = codes_length_freq.get(i.into()).into();
-                            let mut s = (prev_s / 2) - n;
-                            // if starting code for length n is not even
-                            if s & 1 != 0 {
-                                //elevate next least frequent symbol
-                                let mut merge_span = merge.span();
-                                loop {
-                                    match merge_span.pop_front() {
-                                        Option::Some(node) => {
-                                            let node = *node;
-                                            let code_length: u16 = codes_length.get(node).into();
-
-                                            if code_length == (i - 1) {
-                                                self
-                                                    .increment_codes_length(
-                                                        ref codes_length,
-                                                        array![node].span(),
-                                                        max_code_length
-                                                    );
-
-                                                codes_length_freq = self
-                                                    .get_codes_length_frequencies(
-                                                        ref codes_length, keys
-                                                    );
-                                                i = (max_code_length + 1).into();
-                                                s = pow(2, i) * 2;
-                                                break;
-                                            }
-                                        },
-                                        Option::None => { break; },
-                                    };
-                                };
-                            }
-                            prev_s = s;
-                            i -= 1;
-                        };
+                        self.adjust_tree_structure(ref codes_length, keys, max_code_length);
                     }
                 },
                 Option::None => (),
@@ -314,7 +335,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         codes_length
     }
     fn set_codes(
-        ref self: Huffman<ByteArray>, ref codes_length: DictWithKeys<u8>, max_code_length: u8
+        self: @Huffman<ByteArray>, ref codes_length: DictWithKeys<u8>, max_code_length: u8
     ) -> Felt252Dict<u32> {
         let mut codes_length_freq = self
             .get_codes_length_frequencies(ref codes_length.dict, @codes_length.keys);
@@ -351,12 +372,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
         codes
     }
-    fn init_tables(
-        ref self: Huffman<ByteArray>,
-        max_code_length: u8,
-        max_offset_code_length: u8,
-        max_bit_length: u8
-    ) {
+    fn init_tables(ref self: Huffman<ByteArray>, max_code_length: u8) {
         let mut bytes_freq: DictWithKeys<u32> = Default::default();
         let mut offset_codes_freq: DictWithKeys<u32> = Default::default();
         self.get_frequencies(ref bytes_freq, ref offset_codes_freq);
@@ -377,12 +393,11 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                     codes: bytes_codes
                 };
 
-        let mut offset_codes_length = self
-            .get_codes_length(ref offset_codes_freq, max_offset_code_length);
+        let mut offset_codes_length = self.get_codes_length(ref offset_codes_freq, max_code_length);
         let mut offset_codes_length = DictWithKeys {
             dict: offset_codes_length, keys: offset_codes_freq.keys.clone()
         };
-        let mut offset_codes = self.set_codes(ref offset_codes_length, max_offset_code_length);
+        let mut offset_codes = self.set_codes(ref offset_codes_length, max_code_length);
         self
             .offsets =
                 HuffmanTable {
@@ -390,27 +405,29 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                     codes_length: offset_codes_length.dict,
                     codes: offset_codes
                 };
-
-        self.bit_length_table(max_bit_length);
     }
-    fn bit_length_table(ref self: Huffman<ByteArray>, max_bit_length: u8) {
+    fn bit_length_table(
+        ref self: Huffman<ByteArray>, hlit: usize, hdist: usize, max_bit_length: u8
+    ) {
         //hlit + hdist length array of code_length
         let mut code_length_array = array![];
-        let mut span = self.litterals.symbols.span();
+        let mut i = 0;
         loop {
-            match span.pop_front() {
-                Option::Some(symbol) => code_length_array
-                    .append(self.litterals.codes_length.get(*symbol)),
-                Option::None => { break; },
+            if i >= hlit {
+                break;
             }
+            code_length_array.append(self.litterals.codes_length.get(i.into()));
+
+            i += 1;
         };
-        span = self.offsets.symbols.span();
+        i = 0;
         loop {
-            match span.pop_front() {
-                Option::Some(symbol) => code_length_array
-                    .append(self.offsets.codes_length.get(*symbol)),
-                Option::None => { break; },
+            if i >= hdist {
+                break;
             }
+            code_length_array.append(self.offsets.codes_length.get(i.into()));
+
+            i += 1;
         };
 
         //apply repeat codes
@@ -476,7 +493,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
         let mut codes_length_dict: Felt252Dict<u8> = Default::default();
         let mut symbols: Array<felt252> = array![];
-        let mut i = 0;
+        i = 0;
         loop {
             if i >= code_length_array.len() {
                 break;
@@ -520,8 +537,25 @@ impl HuffmanEncoder of Encoder<ByteArray> {
     fn encode(data: ByteArray) -> ByteArray {
         let mut huffman = HuffmanImpl::new(@data);
         let max_code_length = 15;
+        huffman.init_tables(max_code_length);
+
+        let lit_sortable: Array<u32> = (@huffman.litterals.symbols).try_into().unwrap();
+        let lit_max = lit_sortable.max().unwrap();
+        let hlit = if lit_max <= LENGTH_BYTE_START {
+            LENGTH_BYTE_START
+        } else {
+            lit_max
+        };
+
+        let hdist = if huffman.offsets.symbols.is_empty() {
+            1
+        } else {
+            let offsets_sortable: Array<u32> = (@huffman.offsets.symbols).try_into().unwrap();
+            offsets_sortable.max().unwrap()
+        };
+
         let max_bit_length = 7;
-        huffman.init_tables(max_code_length, max_code_length, max_bit_length);
+        huffman.bit_length_table(hlit, hdist, max_bit_length);
 
         huffman.output
     }
