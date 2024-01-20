@@ -4,6 +4,7 @@ use integer::u32_overflowing_sub;
 use compression::utils::sorting;
 use compression::utils::dict_ext::{DictWithKeys, clone_from_keys};
 use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
+use compression::deflate::magic_array;
 use compression::offset_length_code::{
     ESCAPE_BYTE, CODE_BYTE_COUNT, MIN_CODE_LEN, OLCode, OLCodeImpl
 };
@@ -35,6 +36,7 @@ struct Huffman<T> {
     input: @T,
     litterals: HuffmanTable,
     offsets: HuffmanTable,
+    bit_length: HuffmanTable,
     output: T,
     input_pos: usize
 }
@@ -62,7 +64,10 @@ trait HuffmanTrait<T> {
     fn set_codes(
         ref self: Huffman<T>, ref codes_length: DictWithKeys<u8>, max_code_length: u8
     ) -> Felt252Dict<u32>;
-    fn init_tables(ref self: Huffman<T>, max_code_length: u8, max_offset_code_length: u8);
+    fn init_tables(
+        ref self: Huffman<T>, max_code_length: u8, max_offset_code_length: u8, max_bit_length: u8
+    );
+    fn bit_length_table(ref self: Huffman<T>, max_bit_length: u8);
 }
 
 impl HuffmanImpl of HuffmanTrait<ByteArray> {
@@ -72,6 +77,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             input: input,
             litterals: Default::default(),
             offsets: Default::default(),
+            bit_length: Default::default(),
             output: Default::default(),
             input_pos: 0
         }
@@ -345,7 +351,12 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
         codes
     }
-    fn init_tables(ref self: Huffman<ByteArray>, max_code_length: u8, max_offset_code_length: u8) {
+    fn init_tables(
+        ref self: Huffman<ByteArray>,
+        max_code_length: u8,
+        max_offset_code_length: u8,
+        max_bit_length: u8
+    ) {
         let mut bytes_freq: DictWithKeys<u32> = Default::default();
         let mut offset_codes_freq: DictWithKeys<u32> = Default::default();
         self.get_frequencies(ref bytes_freq, ref offset_codes_freq);
@@ -379,13 +390,138 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                     codes_length: offset_codes_length.dict,
                     codes: offset_codes
                 };
+
+        self.bit_length_table(max_bit_length);
+    }
+    fn bit_length_table(ref self: Huffman<ByteArray>, max_bit_length: u8) {
+        //hlit + hdist length array of code_length
+        let mut code_length_array = array![];
+        let mut span = self.litterals.symbols.span();
+        loop {
+            match span.pop_front() {
+                Option::Some(symbol) => code_length_array
+                    .append(self.litterals.codes_length.get(*symbol)),
+                Option::None => { break; },
+            }
+        };
+        span = self.offsets.symbols.span();
+        loop {
+            match span.pop_front() {
+                Option::Some(symbol) => code_length_array
+                    .append(self.offsets.codes_length.get(*symbol)),
+                Option::None => { break; },
+            }
+        };
+
+        //apply repeat codes
+        let mut codes_length_span = code_length_array.span();
+        code_length_array = array![];
+        let mut prev = 19;
+        let mut repeat_count: u32 = 0;
+        let mut repeat_values = array![];
+
+        loop {
+            match codes_length_span.pop_front() {
+                Option::Some(code_length) => {
+                    let code_length = *code_length;
+
+                    if code_length == prev {
+                        repeat_count += 1;
+                    } else {
+                        if repeat_count > 3 && code_length != 0 {
+                            code_length_array.append(code_length);
+                            code_length_array.append(16);
+
+                            if repeat_count <= 6 {
+                                repeat_values.append(repeat_count);
+                                repeat_count = 0;
+                            } else {
+                                repeat_values.append(6);
+                                repeat_count = repeat_count - 6;
+                            }
+                        } else if repeat_count >= 3 && code_length == 0 {
+                            if repeat_count < 11 {
+                                code_length_array.append(17);
+                                repeat_values.append(repeat_count);
+                                repeat_count = 0;
+                            } else {
+                                code_length_array.append(18);
+
+                                if repeat_count <= 138 {
+                                    repeat_values.append(repeat_count);
+                                    repeat_count = 0;
+                                } else {
+                                    repeat_values.append(138);
+                                    repeat_count = repeat_count - 138;
+                                }
+                            }
+                        } else {
+                            let mut j = 0;
+                            loop {
+                                if j >= repeat_count {
+                                    break;
+                                }
+                                code_length_array.append(code_length);
+
+                                j += 1;
+                            };
+                        }
+                    }
+
+                    prev = code_length;
+                },
+                Option::None => { break; },
+            };
+        };
+
+        let mut codes_length_dict: Felt252Dict<u8> = Default::default();
+        let mut symbols: Array<felt252> = array![];
+        let mut i = 0;
+        loop {
+            if i >= code_length_array.len() {
+                break;
+            }
+            let felt_i: felt252 = i.into();
+            symbols.append(felt_i);
+            codes_length_dict.insert(felt_i, *code_length_array[i]);
+
+            i += 1;
+        };
+
+        let magic_array = magic_array();
+        let mut frequency_dict = self.get_codes_length_frequencies(ref codes_length_dict, @symbols);
+
+        let mut codes_length_freq: Felt252Dict<u32> = Default::default();
+        let mut span = magic_array.span();
+        loop {
+            match span.pop_front() {
+                Option::Some(code_length) => {
+                    let code_length = *code_length;
+                    codes_length_freq.insert(code_length, frequency_dict.get(code_length).into());
+                },
+                Option::None => { break; },
+            }
+        };
+
+        let mut frequencies = DictWithKeys { keys: magic_array.clone(), dict: codes_length_freq };
+        let mut codes_length = self.get_codes_length(ref frequencies, 7);
+        let mut codes_length = DictWithKeys { keys: frequencies.keys, dict: codes_length };
+        let mut codes = self.set_codes(ref codes_length, 7);
+
+        self
+            .bit_length =
+                HuffmanTable {
+                    symbols: codes_length.keys, codes_length: codes_length_dict, codes: codes
+                };
     }
 }
+
 impl HuffmanEncoder of Encoder<ByteArray> {
     fn encode(data: ByteArray) -> ByteArray {
         let mut huffman = HuffmanImpl::new(@data);
         let max_code_length = 15;
-        huffman.init_tables(max_code_length, max_code_length);
+        let max_bit_length = 7;
+        huffman.init_tables(max_code_length, max_code_length, max_bit_length);
 
         huffman.output
     }

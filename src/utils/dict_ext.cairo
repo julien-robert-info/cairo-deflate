@@ -8,7 +8,7 @@ impl DictWithKeysDefault<
 > of Default<DictWithKeys<T>> {
     #[inline(always)]
     fn default() -> DictWithKeys<T> {
-        DictWithKeys { dict: Default::default(), keys: array![], }
+        DictWithKeys { dict: Default::default(), keys: array![] }
     }
 }
 

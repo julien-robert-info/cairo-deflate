@@ -52,4 +52,7 @@ impl DeflateDecoder of Decoder<ByteArray> {
 // ((current_byte & 0x40) / 0x40).print();
 // ((current_byte & 0x80) / 0x80).print();
 
-
+#[inline(always)]
+fn magic_array() -> Array<felt252> {
+    array![16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+}
