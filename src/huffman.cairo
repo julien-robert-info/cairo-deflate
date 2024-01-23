@@ -10,6 +10,7 @@ use compression::offset_length_code::{
 };
 use alexandria_math::pow;
 use alexandria_sorting::bubble_sort::bubble_sort_elements;
+use alexandria_data_structures::bit_array::{BitArray, BitArrayImpl};
 use alexandria_data_structures::array_ext::{ArrayTraitExt, SpanTraitExt};
 
 const LENGTH_BYTE_START: u32 = 257;
@@ -37,6 +38,7 @@ struct Huffman<T> {
     litterals: HuffmanTable,
     offsets: HuffmanTable,
     bit_length: HuffmanTable,
+    repeat_values: Array<u8>,
     output: T,
     input_pos: usize
 }
@@ -71,7 +73,7 @@ trait HuffmanTrait<T> {
         self: @Huffman<T>, ref codes_length: DictWithKeys<u8>, max_code_length: u8
     ) -> Felt252Dict<u32>;
     fn init_tables(ref self: Huffman<T>, max_code_length: u8);
-    fn bit_length_table(ref self: Huffman<T>, hlit: usize, hdist: usize, max_bit_length: u8);
+    fn bit_length_table(ref self: Huffman<T>, max_bit_length: u8) -> (u32, u32);
 }
 
 impl HuffmanImpl of HuffmanTrait<ByteArray> {
@@ -82,6 +84,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             litterals: Default::default(),
             offsets: Default::default(),
             bit_length: Default::default(),
+            repeat_values: Default::default(),
             output: Default::default(),
             input_pos: 0
         }
@@ -125,20 +128,25 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             Option::Some(byte) => {
                 let felt_byte: felt252 = byte.into();
 
-                if byte == ESCAPE_BYTE {
+                if byte != ESCAPE_BYTE {
+                    //increment byte frequency
+                    let (entry, prev_value) = bytes.dict.entry(felt_byte);
+                    if prev_value == 0 {
+                        bytes.keys.append(felt_byte);
+                    }
+                    bytes.dict = entry.finalize(prev_value + 1);
+                } else {
                     if !self.is_escaped() {
                         // get length and offset codes
                         let sequence = self.read_code();
-                        let length_code = sequence.get_length_code();
-                        let offset_code = sequence.get_offset_code();
+                        let (length_code, length_extra_bits) = sequence.get_length_code();
+                        let (offset_code, offset_extra_bits) = sequence.get_offset_code();
                         //increment length and offset codes frequency
-                        let (entry, prev_value) = bytes
-                            .dict
-                            .entry((length_code + LENGTH_BYTE_START).into());
+                        let (entry, prev_value) = bytes.dict.entry(length_code);
                         bytes.dict = entry.finalize(prev_value + 1);
-                        let (entry, prev_value) = offset_codes.dict.entry(offset_code.into());
+                        let (entry, prev_value) = offset_codes.dict.entry(offset_code);
                         if prev_value == 0 {
-                            offset_codes.keys.append(offset_code.into());
+                            offset_codes.keys.append(offset_code);
                         }
                         offset_codes.dict = entry.finalize(prev_value + 1);
                     } else {
@@ -149,13 +157,6 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                         bytes.dict = entry.finalize(prev_value + 2);
                         self.input_pos += 1;
                     }
-                } else {
-                    //increment byte frequency
-                    let (entry, prev_value) = bytes.dict.entry(felt_byte);
-                    if prev_value == 0 {
-                        bytes.keys.append(felt_byte);
-                    }
-                    bytes.dict = entry.finalize(prev_value + 1);
                 }
 
                 self.get_frequencies(ref bytes, ref offset_codes);
@@ -404,9 +405,23 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                     codes: offset_codes
                 };
     }
-    fn bit_length_table(
-        ref self: Huffman<ByteArray>, hlit: usize, hdist: usize, max_bit_length: u8
-    ) {
+    fn bit_length_table(ref self: Huffman<ByteArray>, max_bit_length: u8) -> (u32, u32) {
+        //define hlit and hdist
+        let lit_sortable: Array<u32> = (@self.litterals.symbols).try_into().unwrap();
+        let lit_max = lit_sortable.max().unwrap();
+        let hlit = if lit_max <= LENGTH_BYTE_START {
+            LENGTH_BYTE_START
+        } else {
+            lit_max
+        };
+
+        let hdist = if self.offsets.symbols.is_empty() {
+            1
+        } else {
+            let offsets_sortable: Array<u32> = (@self.offsets.symbols).try_into().unwrap();
+            offsets_sortable.max().unwrap()
+        };
+
         //hlit + hdist length array of code_length
         let mut code_length_array = array![];
         let mut i = 0;
@@ -432,8 +447,8 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         let mut codes_length_span = code_length_array.span();
         code_length_array = array![];
         let mut prev = 19;
-        let mut repeat_count: u32 = 0;
-        let mut repeat_values = array![];
+        let mut repeat_count: u8 = 0;
+        let mut repeat_values: Array<u8> = array![];
 
         loop {
             match codes_length_span.pop_front() {
@@ -488,7 +503,9 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                 Option::None => { break; },
             };
         };
+        self.repeat_values = repeat_values;
 
+        //build table
         let mut codes_length_dict: Felt252Dict<u8> = Default::default();
         let mut symbols: Array<felt252> = array![];
         i = 0;
@@ -522,39 +539,130 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         let mut codes_length = self.get_codes_length(ref frequencies, 7);
         let mut codes_length = DictWithKeys { keys: frequencies.keys, dict: codes_length };
         let mut codes = self.set_codes(ref codes_length, 7);
-
         self
             .bit_length =
                 HuffmanTable {
                     symbols: codes_length.keys, codes_length: codes_length_dict, codes: codes
                 };
+
+        (hlit, hdist)
     }
 }
 
 impl HuffmanEncoder of Encoder<ByteArray> {
     fn encode(data: ByteArray) -> ByteArray {
-        let mut huffman = HuffmanImpl::new(@data);
         let max_code_length = 15;
-        huffman.init_tables(max_code_length);
-
-        let lit_sortable: Array<u32> = (@huffman.litterals.symbols).try_into().unwrap();
-        let lit_max = lit_sortable.max().unwrap();
-        let hlit = if lit_max <= LENGTH_BYTE_START {
-            LENGTH_BYTE_START
-        } else {
-            lit_max
-        };
-
-        let hdist = if huffman.offsets.symbols.is_empty() {
-            1
-        } else {
-            let offsets_sortable: Array<u32> = (@huffman.offsets.symbols).try_into().unwrap();
-            offsets_sortable.max().unwrap()
-        };
-
         let max_bit_length = 7;
-        huffman.bit_length_table(hlit, hdist, max_bit_length);
+        let mut huffman = HuffmanImpl::new(@data);
+        huffman.init_tables(max_code_length);
+        let (hlit, hdist) = huffman.bit_length_table(max_bit_length);
+        let mut bit_stream: BitArray = Default::default();
 
+        let symbols = @huffman.bit_length.symbols;
+        let mut hclen = symbols.len() - 1;
+        loop {
+            if huffman.bit_length.codes_length.get(*symbols[hclen]) > 0 {
+                break;
+            }
+
+            hclen -= 1;
+        };
+
+        bit_stream.write_word_be((hlit - 257).into(), 5);
+        bit_stream.write_word_be((hdist - 1).into(), 5);
+        bit_stream.write_word_be((hclen - 4).into(), 4);
+
+        let magic_array = magic_array();
+        let mut i = 0;
+        loop {
+            if i >= hclen {
+                break;
+            }
+            bit_stream
+                .write_word_be(
+                    huffman.bit_length.codes_length.get((*magic_array[i]).into()).into(), 3
+                );
+
+            i += 1;
+        };
+
+        let mut span = symbols.span();
+        let mut repeat_values = huffman.repeat_values.span();
+        loop {
+            match span.pop_front() {
+                Option::Some(symbol) => {
+                    let symbol = *symbol;
+                    let code_length = huffman.bit_length.codes_length.get(symbol);
+                    let code = huffman.bit_length.codes.get(symbol);
+                    bit_stream.write_word_be(code.into(), code_length.into());
+
+                    if code_length > 15 {
+                        let val = *repeat_values.pop_front().unwrap();
+                        if code_length == 16 {
+                            bit_stream.write_word_be(val.into(), 2);
+                        } else if code_length == 17 {
+                            bit_stream.write_word_be(val.into(), 3);
+                        } else if code_length == 18 {
+                            bit_stream.write_word_be(val.into(), 7);
+                        }
+                    }
+                },
+                Option::None => { break; },
+            };
+        };
+
+        huffman.input_pos = 0;
+        loop {
+            match huffman.input_read() {
+                Option::Some(byte) => {
+                    let felt_byte: felt252 = byte.into();
+                    if byte != ESCAPE_BYTE {
+                        //output code
+                        let code_length = huffman.bit_length.codes_length.get(felt_byte);
+                        let code = huffman.bit_length.codes.get(felt_byte);
+                        bit_stream.write_word_be(code.into(), code_length.into());
+                    } else {
+                        if !huffman.is_escaped() {
+                            // get length and offset codes
+                            let sequence = huffman.read_code();
+                            let (length_code, length_extra_bits) = sequence.get_length_code();
+                            let (offset_code, offset_extra_bits) = sequence.get_offset_code();
+                            //output length and offset codes with extra bits
+                            let mut code_length = huffman.litterals.codes_length.get(length_code);
+                            let mut code = huffman.litterals.codes.get(length_code);
+                            bit_stream.write_word_be(code.into(), code_length.into());
+                            if length_extra_bits.bits > 0 {
+                                bit_stream
+                                    .write_word_be(length_extra_bits.value, length_extra_bits.bits);
+                            }
+
+                            code_length = huffman.offsets.codes_length.get(length_code);
+                            code = huffman.offsets.codes.get(length_code);
+                            bit_stream.write_word_be(code.into(), code_length.into());
+                            if offset_extra_bits.bits > 0 {
+                                bit_stream
+                                    .write_word_be(offset_extra_bits.value, offset_extra_bits.bits);
+                            }
+                        } else {
+                            //output ESCAPE_BYTE code
+                            let code_length = huffman.bit_length.codes_length.get(felt_byte);
+                            let code = huffman.bit_length.codes.get(felt_byte);
+                            bit_stream.write_word_be(code.into(), code_length.into());
+                            huffman.input_pos += 1;
+                        }
+                    }
+                },
+                Option::None(()) => { break; },
+            };
+        };
+
+        huffman
+            .output =
+                ByteArray {
+                    data: bit_stream.data,
+                    pending_word: bit_stream.current,
+                    pending_word_len: (bit_stream.write_pos / 8) + 1
+                };
         huffman.output
     }
 }

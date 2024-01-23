@@ -4,7 +4,7 @@ use compression::utils::dict_ext::DictWithKeys;
 use compression::huffman::{HuffmanEncoder, HuffmanDecoder, HuffmanImpl};
 
 #[test]
-#[available_gas(5000000)]
+#[available_gas(6000000)]
 fn get_frequencies() {
     let mut huffman = HuffmanImpl::new(@inputs::get_test_phrase_3());
     let mut bytes_freq: DictWithKeys<u32> = Default::default();
