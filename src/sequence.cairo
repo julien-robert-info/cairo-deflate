@@ -4,8 +4,8 @@ const MIN_CODE_LEN: u32 = 3;
 const MAX_CODE_LEN: u32 = 257;
 
 #[derive(Copy, Drop)]
-struct OLCode {
-    offset: u32,
+struct Sequence {
+    distance: u32,
     length: u32
 }
 
@@ -16,11 +16,11 @@ struct ExtraBits {
 }
 
 #[generate_trait]
-impl OLCodeImpl of OLCodeTrait {
-    fn get_length_code(self: @OLCode) -> (felt252, ExtraBits) {
+impl SequenceImpl of SequenceTrait {
+    fn get_length_code(self: @Sequence) -> (felt252, ExtraBits) {
         let mut i = 0;
-        let length_codes = @OLCodeImpl::_length_codes();
-        let extra_bits = @OLCodeImpl::_length_extra_bits();
+        let length_codes = @SequenceImpl::_length_codes();
+        let extra_bits = @SequenceImpl::_length_extra_bits();
         loop {
             if *self.length < *length_codes[i] {
                 break;
@@ -33,12 +33,12 @@ impl OLCodeImpl of OLCodeTrait {
             ExtraBits { value: (*self.length - *length_codes[i - 1]).into(), bits: *extra_bits[i] }
         )
     }
-    fn get_offset_code(self: @OLCode) -> (felt252, ExtraBits) {
+    fn get_distance_code(self: @Sequence) -> (felt252, ExtraBits) {
         let mut i = 0;
-        let offset_codes = @OLCodeImpl::_offset_codes();
-        let extra_bits = @OLCodeImpl::_length_extra_bits();
+        let distance_codes = @SequenceImpl::_distance_codes();
+        let extra_bits = @SequenceImpl::_length_extra_bits();
         loop {
-            if *self.offset < *offset_codes[i] {
+            if *self.distance < *distance_codes[i] {
                 break;
             }
             i += 1;
@@ -46,7 +46,9 @@ impl OLCodeImpl of OLCodeTrait {
 
         (
             i.into(),
-            ExtraBits { value: (*self.offset - *offset_codes[i - 1]).into(), bits: *extra_bits[i] }
+            ExtraBits {
+                value: (*self.distance - *distance_codes[i - 1]).into(), bits: *extra_bits[i]
+            }
         )
     }
     #[inline(always)]
@@ -90,7 +92,7 @@ impl OLCodeImpl of OLCodeTrait {
         ]
     }
     #[inline(always)]
-    fn _offset_codes() -> Array<u32> {
+    fn _distance_codes() -> Array<u32> {
         array![
             2,
             3,
@@ -125,7 +127,7 @@ impl OLCodeImpl of OLCodeTrait {
         ]
     }
     #[inline(always)]
-    fn _offset_extra_bits() -> Array<u32> {
+    fn _distance_extra_bits() -> Array<u32> {
         array![
             0,
             0,
@@ -160,17 +162,17 @@ impl OLCodeImpl of OLCodeTrait {
     }
 }
 
-//format: ESCAPE_BYTE then 1 length byte then 2 offset bytes
-impl OLCodeIntoBytesArray of Into<OLCode, ByteArray> {
+//format: ESCAPE_BYTE then 1 length byte then 2 distance bytes
+impl SequenceIntoBytesArray of Into<Sequence, ByteArray> {
     #[inline(always)]
-    fn into(self: OLCode) -> ByteArray {
+    fn into(self: Sequence) -> ByteArray {
         let length = self.length - MIN_CODE_LEN;
-        let offset = self.offset;
+        let distance = self.distance;
         let mut result: ByteArray = Default::default();
         result.append_byte(ESCAPE_BYTE);
         result.append_byte(length.try_into().unwrap());
-        result.append_byte(((offset & 0xFF00) / 0x100).try_into().unwrap());
-        result.append_byte((offset & 0xFF).try_into().unwrap());
+        result.append_byte(((distance & 0xFF00) / 0x100).try_into().unwrap());
+        result.append_byte((distance & 0xFF).try_into().unwrap());
 
         result
     }

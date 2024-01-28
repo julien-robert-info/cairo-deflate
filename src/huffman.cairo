@@ -5,9 +5,7 @@ use compression::utils::sorting;
 use compression::utils::dict_ext::{DictWithKeys, clone_from_keys};
 use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
 use compression::deflate::magic_array;
-use compression::offset_length_code::{
-    ESCAPE_BYTE, CODE_BYTE_COUNT, MIN_CODE_LEN, OLCode, OLCodeImpl
-};
+use compression::sequence::{ESCAPE_BYTE, CODE_BYTE_COUNT, MIN_CODE_LEN, Sequence, SequenceImpl};
 use alexandria_math::pow;
 use alexandria_sorting::bubble_sort::bubble_sort_elements;
 use alexandria_data_structures::bit_array::{BitArray, BitArrayImpl};
@@ -260,7 +258,7 @@ struct Huffman<T> {
     input: @T,
     bit_stream: BitArray,
     litterals: HuffmanTable,
-    offsets: HuffmanTable,
+    distances: HuffmanTable,
     bit_length: HuffmanTable,
     bit_length_array: Array<u8>,
     repeat_values: Array<u8>,
@@ -272,9 +270,9 @@ trait HuffmanTrait<T> {
     fn new(input: @T) -> Huffman<T>;
     fn input_read(ref self: Huffman<T>) -> Option<u8>;
     fn is_escaped(ref self: Huffman<T>) -> bool;
-    fn read_code(ref self: Huffman<T>) -> OLCode;
+    fn read_sequence(ref self: Huffman<T>) -> Sequence;
     fn get_frequencies(
-        ref self: Huffman<T>, ref bytes: DictWithKeys<u32>, ref offset_codes: DictWithKeys<u32>
+        ref self: Huffman<T>, ref litterals: DictWithKeys<u32>, ref distances: DictWithKeys<u32>
     );
     fn build_tables(ref self: Huffman<T>, max_code_length: u8);
     fn bit_length_table(ref self: Huffman<T>, max_bit_length: u8) -> (u32, u32);
@@ -287,7 +285,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             input: input,
             bit_stream: Default::default(),
             litterals: Default::default(),
-            offsets: Default::default(),
+            distances: Default::default(),
             bit_length: Default::default(),
             bit_length_array: Default::default(),
             repeat_values: Default::default(),
@@ -316,19 +314,19 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         }
     }
     #[inline(always)]
-    fn read_code(ref self: Huffman<ByteArray>) -> OLCode {
+    fn read_sequence(ref self: Huffman<ByteArray>) -> Sequence {
         let byte_left = self.input.len() - self.input_pos;
         assert(byte_left >= CODE_BYTE_COUNT, 'Not enougth bytes to read');
         let length: usize = self.input_read().unwrap().into();
-        let mut offset: usize = self.input_read().unwrap().into();
-        offset = offset * 256 + self.input_read().unwrap().into();
+        let mut distance: usize = self.input_read().unwrap().into();
+        distance = distance * 256 + self.input_read().unwrap().into();
 
-        OLCode { length: length, offset: offset }
+        Sequence { length: length, distance: distance }
     }
     fn get_frequencies(
         ref self: Huffman<ByteArray>,
-        ref bytes: DictWithKeys<u32>,
-        ref offset_codes: DictWithKeys<u32>
+        ref litterals: DictWithKeys<u32>,
+        ref distances: DictWithKeys<u32>
     ) {
         match self.input_read() {
             Option::Some(byte) => {
@@ -336,50 +334,50 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
                 if byte != ESCAPE_BYTE {
                     //increment byte frequency
-                    let (entry, prev_value) = bytes.dict.entry(felt_byte);
+                    let (entry, prev_value) = litterals.dict.entry(felt_byte);
                     if prev_value == 0 {
-                        bytes.keys.append(felt_byte);
+                        litterals.keys.append(felt_byte);
                     }
-                    bytes.dict = entry.finalize(prev_value + 1);
+                    litterals.dict = entry.finalize(prev_value + 1);
                 } else {
                     if !self.is_escaped() {
-                        // get length and offset codes
-                        let sequence = self.read_code();
+                        // get length and distance codes
+                        let sequence = self.read_sequence();
                         let (length_code, length_extra_bits) = sequence.get_length_code();
-                        let (offset_code, offset_extra_bits) = sequence.get_offset_code();
-                        //increment length and offset codes frequency
-                        let (entry, prev_value) = bytes.dict.entry(length_code);
-                        bytes.dict = entry.finalize(prev_value + 1);
-                        let (entry, prev_value) = offset_codes.dict.entry(offset_code);
+                        let (distance_code, distance_extra_bits) = sequence.get_distance_code();
+                        //increment length and distance codes frequency
+                        let (entry, prev_value) = litterals.dict.entry(length_code);
+                        litterals.dict = entry.finalize(prev_value + 1);
+                        let (entry, prev_value) = distances.dict.entry(distance_code);
                         if prev_value == 0 {
-                            offset_codes.keys.append(offset_code);
+                            distances.keys.append(distance_code);
                         }
-                        offset_codes.dict = entry.finalize(prev_value + 1);
+                        distances.dict = entry.finalize(prev_value + 1);
                     } else {
-                        let (entry, prev_value) = bytes.dict.entry(felt_byte);
+                        let (entry, prev_value) = litterals.dict.entry(felt_byte);
                         if prev_value == 0 {
-                            bytes.keys.append(felt_byte);
+                            litterals.keys.append(felt_byte);
                         }
-                        bytes.dict = entry.finalize(prev_value + 2);
+                        litterals.dict = entry.finalize(prev_value + 2);
                         self.input_pos += 1;
                     }
                 }
 
-                self.get_frequencies(ref bytes, ref offset_codes);
+                self.get_frequencies(ref litterals, ref distances);
             },
             Option::None(()) => (),
         }
     }
     fn build_tables(ref self: Huffman<ByteArray>, max_code_length: u8) {
-        let mut bytes_freq: DictWithKeys<u32> = Default::default();
-        let mut offset_codes_freq: DictWithKeys<u32> = Default::default();
-        self.get_frequencies(ref bytes_freq, ref offset_codes_freq);
+        let mut litterals_freq: DictWithKeys<u32> = Default::default();
+        let mut distances_freq: DictWithKeys<u32> = Default::default();
+        self.get_frequencies(ref litterals_freq, ref distances_freq);
 
-        bytes_freq.keys.append(END_OF_BLOCK);
-        bytes_freq.dict.insert(END_OF_BLOCK, 1);
+        litterals_freq.keys.append(END_OF_BLOCK);
+        litterals_freq.dict.insert(END_OF_BLOCK, 1);
 
-        self.litterals.build(ref bytes_freq, max_code_length);
-        self.offsets.build(ref offset_codes_freq, max_code_length);
+        self.litterals.build(ref litterals_freq, max_code_length);
+        self.distances.build(ref distances_freq, max_code_length);
     }
     fn bit_length_table(ref self: Huffman<ByteArray>, max_bit_length: u8) -> (u32, u32) {
         //define hlit and hdist
@@ -391,11 +389,11 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             lit_max
         };
 
-        let hdist = if self.offsets.symbols.is_empty() {
+        let hdist = if self.distances.symbols.is_empty() {
             1
         } else {
-            let offsets_sortable: Array<u32> = (@self.offsets.symbols).try_into().unwrap();
-            offsets_sortable.max().unwrap()
+            let distances_sortable: Array<u32> = (@self.distances.symbols).try_into().unwrap();
+            distances_sortable.max().unwrap()
         };
 
         //hlit + hdist length array of code_length
@@ -414,7 +412,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             if i >= hdist {
                 break;
             }
-            bit_length_array.append(self.offsets.codes_length.get(i.into()));
+            bit_length_array.append(self.distances.codes_length.get(i.into()));
 
             i += 1;
         };
@@ -603,11 +601,11 @@ impl HuffmanEncoder of Encoder<ByteArray> {
                         huffman.bit_stream.write_word_be(code.into(), code_length.into());
                     } else {
                         if !huffman.is_escaped() {
-                            // get length and offset codes
-                            let sequence = huffman.read_code();
+                            // get length and distance codes
+                            let sequence = huffman.read_sequence();
                             let (length_code, length_extra_bits) = sequence.get_length_code();
-                            let (offset_code, offset_extra_bits) = sequence.get_offset_code();
-                            //output length and offset codes with extra bits
+                            let (distance_code, distance_extra_bits) = sequence.get_distance_code();
+                            //output length and distance codes with extra bits
                             let mut code_length = huffman.litterals.codes_length.get(length_code);
                             let mut code = huffman.litterals.codes.get(length_code);
                             huffman.bit_stream.write_word_be(code.into(), code_length.into());
@@ -617,13 +615,15 @@ impl HuffmanEncoder of Encoder<ByteArray> {
                                     .write_word_be(length_extra_bits.value, length_extra_bits.bits);
                             }
 
-                            code_length = huffman.offsets.codes_length.get(length_code);
-                            code = huffman.offsets.codes.get(length_code);
+                            code_length = huffman.distances.codes_length.get(length_code);
+                            code = huffman.distances.codes.get(length_code);
                             huffman.bit_stream.write_word_be(code.into(), code_length.into());
-                            if offset_extra_bits.bits > 0 {
+                            if distance_extra_bits.bits > 0 {
                                 huffman
                                     .bit_stream
-                                    .write_word_be(offset_extra_bits.value, offset_extra_bits.bits);
+                                    .write_word_be(
+                                        distance_extra_bits.value, distance_extra_bits.bits
+                                    );
                             }
                         } else {
                             //output ESCAPE_BYTE code

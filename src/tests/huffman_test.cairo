@@ -10,9 +10,9 @@ use compression::huffman::{
 fn get_frequencies() {
     let mut huffman = HuffmanImpl::new(@inputs::get_test_phrase_3());
     let mut bytes_freq: DictWithKeys<u32> = Default::default();
-    let mut offset_codes_freq: DictWithKeys<u32> = Default::default();
+    let mut distance_codes_freq: DictWithKeys<u32> = Default::default();
 
-    huffman.get_frequencies(ref bytes_freq, ref offset_codes_freq);
+    huffman.get_frequencies(ref bytes_freq, ref distance_codes_freq);
 
     let bytes = array!['g', 'o', ' ', 'p', 'h', 'e', 'r', 's'];
     let expected_frequencies = array![3, 3, 2, 1, 1, 1, 1, 1];

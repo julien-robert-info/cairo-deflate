@@ -3,7 +3,7 @@ mod utils {
     mod sorting;
 }
 mod commons;
-mod offset_length_code;
+mod sequence;
 mod lz77;
 mod huffman;
 // mod deflate;
