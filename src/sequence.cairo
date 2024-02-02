@@ -1,12 +1,12 @@
 const ESCAPE_BYTE: u8 = 0xFF;
-const CODE_BYTE_COUNT: usize = 3;
-const MIN_CODE_LEN: u32 = 3;
-const MAX_CODE_LEN: u32 = 257;
+const SEQUENCE_BYTE_COUNT: usize = 3;
+const MIN_SEQUENCE_LEN: u32 = 3;
+const MAX_SEQUENCE_LEN: u32 = 257;
 
 #[derive(Copy, Drop)]
 struct Sequence {
-    distance: u32,
-    length: u32
+    length: u32,
+    distance: u32
 }
 
 #[derive(Copy, Drop)]
@@ -29,7 +29,7 @@ impl SequenceImpl of SequenceTrait {
         };
 
         (
-            (i + MAX_CODE_LEN).into(),
+            (i + MAX_SEQUENCE_LEN).into(),
             ExtraBits { value: (*self.length - *length_codes[i - 1]).into(), bits: *extra_bits[i] }
         )
     }
@@ -166,7 +166,7 @@ impl SequenceImpl of SequenceTrait {
 impl SequenceIntoBytesArray of Into<Sequence, ByteArray> {
     #[inline(always)]
     fn into(self: Sequence) -> ByteArray {
-        let length = self.length - MIN_CODE_LEN;
+        let length = self.length - MIN_SEQUENCE_LEN;
         let distance = self.distance;
         let mut result: ByteArray = Default::default();
         result.append_byte(ESCAPE_BYTE);

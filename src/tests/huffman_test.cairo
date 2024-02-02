@@ -165,7 +165,7 @@ fn max_code_length() {
 }
 
 #[test]
-#[available_gas(700000000)]
+#[available_gas(1000000000)]
 fn test_huffman() {
     let compressed = HuffmanEncoder::encode(inputs::get_test_phrase_2());
 // let decompressed = HuffmanDecoder::decode(compressed);

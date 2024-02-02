@@ -1,14 +1,16 @@
 use nullable::FromNullableResult;
 use integer::u32_overflowing_sub;
 use compression::commons::{Encoder, Decoder};
-use compression::sequence::{ESCAPE_BYTE, CODE_BYTE_COUNT, MIN_CODE_LEN, MAX_CODE_LEN, Sequence};
+use compression::sequence::{
+    ESCAPE_BYTE, SEQUENCE_BYTE_COUNT, MIN_SEQUENCE_LEN, MAX_SEQUENCE_LEN, Sequence
+};
 use alexandria_data_structures::array_ext::SpanTraitExt;
 
 const WINDOW_SIZE: usize = 32768;
 
 #[derive(Copy, Drop)]
 struct Match {
-    code: Sequence,
+    sequence: Sequence,
     pos: usize
 }
 
@@ -35,11 +37,11 @@ trait Lz77Trait<T> {
     fn is_active_matching(self: @Lz77<T>) -> bool;
     fn process_matches(ref self: Lz77<T>);
     fn output_byte(ref self: Lz77<T>, byte: u8);
-    fn output_raw_sequence(ref self: Lz77<T>, code: Sequence);
-    fn output_sequence(ref self: Lz77<T>, code: Sequence);
+    fn output_raw_sequence(ref self: Lz77<T>, sequence: Sequence);
+    fn output_sequence(ref self: Lz77<T>, sequence: Sequence);
     fn is_escaped(ref self: Lz77<T>) -> bool;
     fn read_sequence(ref self: Lz77<T>) -> Sequence;
-    fn output_from_code(ref self: Lz77<T>, code: Sequence);
+    fn output_from_sequence(ref self: Lz77<T>, sequence: Sequence);
 }
 
 impl Lz77Impl of Lz77Trait<ByteArray> {
@@ -94,7 +96,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     #[inline(always)]
     fn create_match(ref self: Lz77<ByteArray>, start: usize) {
         let m = Match {
-            code: Sequence { distance: self.input_pos - start, length: 1 }, pos: self.input_pos
+            sequence: Sequence { distance: self.input_pos - start, length: 1 }, pos: self.input_pos
         };
         self.matches.append(m);
     }
@@ -108,16 +110,17 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                 match matches.pop_front() {
                     Option::Some(m) => {
                         let m = *m;
-                        if input_pos - m.code.distance >= window_start {
+                        if input_pos - m.sequence.distance >= window_start {
                             let active = m.pos + 1 == input_pos;
-                            let next_byte = self.input.at(m.pos - m.code.distance + 1).unwrap();
+                            let next_byte = self.input.at(m.pos - m.sequence.distance + 1).unwrap();
                             let updatable = next_byte == byte;
-                            if active && updatable && m.code.length < MAX_CODE_LEN {
+                            if active && updatable && m.sequence.length < MAX_SEQUENCE_LEN {
                                 updated_matches
                                     .append(
                                         Match {
-                                            code: Sequence {
-                                                distance: m.code.distance, length: m.code.length + 1
+                                            sequence: Sequence {
+                                                distance: m.sequence.distance,
+                                                length: m.sequence.length + 1
                                             },
                                             pos: input_pos
                                         }
@@ -144,15 +147,15 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
 
                     match match_nullable(best) {
                         FromNullableResult::Null(()) => {
-                            if m.code.length >= MIN_CODE_LEN {
+                            if m.sequence.length >= MIN_SEQUENCE_LEN {
                                 best = nullable_from_box(BoxTrait::new(m));
                             }
                         },
                         FromNullableResult::NotNull(best_m) => {
                             let best_m = best_m.unbox();
-                            let longer = m.code.length > best_m.code.length;
-                            let closer = m.code.length == best_m.code.length
-                                && m.code.distance < best_m.code.distance;
+                            let longer = m.sequence.length > best_m.sequence.length;
+                            let closer = m.sequence.length == best_m.sequence.length
+                                && m.sequence.distance < best_m.sequence.distance;
                             if longer || closer {
                                 best = nullable_from_box(BoxTrait::new(m));
                             }
@@ -197,16 +200,16 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
                 FromNullableResult::NotNull(best) => {
                     let best = best.unbox();
                     //output potential raw sequence before match
-                    if output_pos + best.code.length < best.pos + 1 {
+                    if output_pos + best.sequence.length < best.pos + 1 {
                         self
                             .output_raw_sequence(
                                 Sequence {
                                     distance: input_pos - output_pos,
-                                    length: best.pos + 1 - best.code.length - output_pos
+                                    length: best.pos + 1 - best.sequence.length - output_pos
                                 }
                             );
                     }
-                    self.output_sequence(best.code);
+                    self.output_sequence(best.sequence);
                     //output potential raw sequence after match
                     if best.pos + 1 < input_pos {
                         self
@@ -231,14 +234,16 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         self.output.append_byte(byte);
         self.output_pos += 1;
     }
-    fn output_raw_sequence(ref self: Lz77<ByteArray>, code: Sequence) {
-        if code.length > 0 {
-            match self.input.at(self.input_pos - code.distance) {
+    fn output_raw_sequence(ref self: Lz77<ByteArray>, sequence: Sequence) {
+        if sequence.length > 0 {
+            match self.input.at(self.input_pos - sequence.distance) {
                 Option::Some(byte) => {
                     self.output_byte(byte);
                     self
                         .output_raw_sequence(
-                            code: Sequence { distance: code.distance - 1, length: code.length - 1 }
+                            sequence: Sequence {
+                                distance: sequence.distance - 1, length: sequence.length - 1
+                            }
                         );
                 },
                 Option::None => {},
@@ -246,11 +251,11 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         }
     }
     #[inline(always)]
-    fn output_sequence(ref self: Lz77<ByteArray>, code: Sequence) {
-        let byte_code: ByteArray = code.into();
-        self.output.append(@byte_code);
+    fn output_sequence(ref self: Lz77<ByteArray>, sequence: Sequence) {
+        let byte_sequence: ByteArray = sequence.into();
+        self.output.append(@byte_sequence);
 
-        self.output_pos += code.length;
+        self.output_pos += sequence.length;
     }
     #[inline(always)]
     fn is_escaped(ref self: Lz77<ByteArray>) -> bool {
@@ -270,7 +275,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         let byte_left = self.input.len() - self.input_pos;
         assert(byte_left >= CODE_BYTE_COUNT, 'Not enougth bytes to read');
         self.increment_pos();
-        let length: u32 = self.input_read().unwrap().into() + MIN_CODE_LEN;
+        let length: u32 = self.input_read().unwrap().into() + MIN_SEQUENCE_LEN;
         self.increment_pos();
         let mut distance: u32 = self.input_read().unwrap().into();
         self.increment_pos();
@@ -278,14 +283,16 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
 
         Sequence { length: length, distance: distance }
     }
-    fn output_from_code(ref self: Lz77<ByteArray>, code: Sequence) {
-        if code.length > 0 {
-            match self.output.at(self.output_pos - code.distance) {
+    fn output_from_sequence(ref self: Lz77<ByteArray>, sequence: Sequence) {
+        if sequence.length > 0 {
+            match self.output.at(self.output_pos - sequence.distance) {
                 Option::Some(byte) => {
                     self.output_byte(byte);
                     self
-                        .output_from_code(
-                            code: Sequence { length: code.length - 1, distance: code.distance }
+                        .output_from_sequence(
+                            sequence: Sequence {
+                                length: sequence.length - 1, distance: sequence.distance
+                            }
                         );
                 },
                 Option::None => {},

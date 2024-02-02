@@ -5,7 +5,7 @@ use compression::utils::sorting;
 use compression::utils::dict_ext::{DictWithKeys, clone_from_keys};
 use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
 use compression::deflate::magic_array;
-use compression::sequence::{ESCAPE_BYTE, CODE_BYTE_COUNT, MIN_CODE_LEN, Sequence, SequenceImpl};
+use compression::sequence::{ESCAPE_BYTE, SEQUENCE_BYTE_COUNT, Sequence, SequenceImpl};
 use alexandria_math::pow;
 use alexandria_sorting::bubble_sort::bubble_sort_elements;
 use alexandria_data_structures::bit_array::{BitArray, BitArrayImpl};
@@ -50,7 +50,7 @@ trait HuffmanTableTrait {
 }
 
 impl HuffmanTableImpl of HuffmanTableTrait {
-    fn increment_codes_length(ref self: HuffmanTable, nodes: Span<felt252>,) -> bool {
+    fn increment_codes_length(ref self: HuffmanTable, nodes: Span<felt252>) -> bool {
         let mut nodes = nodes;
         let mut max_length_reached = false;
 
@@ -72,7 +72,7 @@ impl HuffmanTableImpl of HuffmanTableTrait {
 
         max_length_reached
     }
-    fn get_codes_length_frequencies(ref self: HuffmanTable,) -> Felt252Dict<u8> {
+    fn get_codes_length_frequencies(ref self: HuffmanTable) -> Felt252Dict<u8> {
         let mut codes_length_freq: Felt252Dict<u8> = Default::default();
         let mut symbols = self.symbols.span();
 
@@ -136,8 +136,13 @@ impl HuffmanTableImpl of HuffmanTableTrait {
             i -= 1;
         };
     }
-    fn get_codes_length(ref self: HuffmanTable, ref frequencies: Felt252Dict<u32>,) {
+    fn get_codes_length(ref self: HuffmanTable, ref frequencies: Felt252Dict<u32>) {
         let keys = @self.symbols;
+        if keys.len() == 1 {
+            self.increment_codes_length(keys.span());
+            return;
+        }
+
         let mut merged_freq = clone_from_keys(keys, ref frequencies);
         let mut nodes = self.symbols.clone();
         let mut merged: Felt252Dict<Nullable<Span<felt252>>> = Default::default();
@@ -194,7 +199,7 @@ impl HuffmanTableImpl of HuffmanTableTrait {
             }
         }
     }
-    fn set_codes(ref self: HuffmanTable,) {
+    fn set_codes(ref self: HuffmanTable) {
         let mut codes_length_freq = self.get_codes_length_frequencies();
         //set starting codes
         let mut start_codes: Felt252Dict<u32> = Default::default();
@@ -262,7 +267,6 @@ struct Huffman<T> {
     bit_length: HuffmanTable,
     bit_length_array: Array<u8>,
     repeat_values: Array<u8>,
-    output: T,
     input_pos: usize
 }
 
@@ -289,7 +293,6 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             bit_length: Default::default(),
             bit_length_array: Default::default(),
             repeat_values: Default::default(),
-            output: Default::default(),
             input_pos: 0
         }
     }
@@ -372,6 +375,10 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         let mut litterals_freq: DictWithKeys<u32> = Default::default();
         let mut distances_freq: DictWithKeys<u32> = Default::default();
         self.get_frequencies(ref litterals_freq, ref distances_freq);
+        if distances_freq.keys.is_empty() {
+            distances_freq.keys.append(0);
+            distances_freq.dict.insert(0, 1);
+        }
 
         litterals_freq.keys.append(END_OF_BLOCK);
         litterals_freq.dict.insert(END_OF_BLOCK, 1);
@@ -389,12 +396,8 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             lit_max
         };
 
-        let hdist = if self.distances.symbols.is_empty() {
-            1
-        } else {
-            let distances_sortable: Array<u32> = (@self.distances.symbols).try_into().unwrap();
-            distances_sortable.max().unwrap()
-        };
+        let distances_sortable: Array<u32> = (@self.distances.symbols).try_into().unwrap();
+        let hdist = distances_sortable.max().unwrap() + 1;
 
         //hlit + hdist length array of code_length
         let mut bit_length_array = array![];
@@ -407,6 +410,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
             i += 1;
         };
+
         i = 0;
         loop {
             if i >= hdist {
@@ -459,13 +463,13 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                                     repeat_count = repeat_count - 138;
                                 }
                             }
-                        } else {
+                        } else if prev != 19 {
                             let mut j = 0;
                             loop {
-                                if j >= repeat_count {
+                                if j > repeat_count {
                                     break;
                                 }
-                                bit_length_array.append(code_length);
+                                bit_length_array.append(prev);
 
                                 j += 1;
                             };
@@ -476,7 +480,18 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
                     prev = code_length;
                 },
-                Option::None => { break; },
+                Option::None => {
+                    let mut j = 0;
+                    loop {
+                        if j > repeat_count {
+                            break;
+                        }
+                        bit_length_array.append(prev);
+
+                        j += 1;
+                    };
+                    break;
+                },
             };
         };
         self.bit_length_array = bit_length_array.clone();
@@ -521,7 +536,6 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
         let mut frequencies = DictWithKeys { keys: magic_array.clone(), dict: codes_length_freq };
         self.bit_length.build(ref frequencies, 7);
-
         (hlit, hdist)
     }
 }
@@ -588,7 +602,6 @@ impl HuffmanEncoder of Encoder<ByteArray> {
                 Option::None => { break; },
             };
         };
-
         huffman.input_pos = 0;
         loop {
             match huffman.input_read() {
@@ -596,8 +609,8 @@ impl HuffmanEncoder of Encoder<ByteArray> {
                     let felt_byte: felt252 = byte.into();
                     if byte != ESCAPE_BYTE {
                         //output code
-                        let code_length = huffman.bit_length.codes_length.get(felt_byte);
-                        let code = huffman.bit_length.codes.get(felt_byte);
+                        let code_length = huffman.litterals.codes_length.get(felt_byte);
+                        let code = huffman.litterals.codes.get(felt_byte);
                         huffman.bit_stream.write_word_be(code.into(), code_length.into());
                     } else {
                         if !huffman.is_escaped() {
@@ -627,8 +640,8 @@ impl HuffmanEncoder of Encoder<ByteArray> {
                             }
                         } else {
                             //output ESCAPE_BYTE code
-                            let code_length = huffman.bit_length.codes_length.get(felt_byte);
-                            let code = huffman.bit_length.codes.get(felt_byte);
+                            let code_length = huffman.litterals.codes_length.get(felt_byte);
+                            let code = huffman.litterals.codes.get(felt_byte);
                             huffman.bit_stream.write_word_be(code.into(), code_length.into());
                             huffman.input_pos += 1;
                         }
@@ -638,21 +651,10 @@ impl HuffmanEncoder of Encoder<ByteArray> {
             };
         };
 
-        huffman
-            .output =
-                ByteArray {
-                    data: bit_stream.data,
-                    pending_word: bit_stream.current,
-                    pending_word_len: (bit_stream.write_pos / 8) + 1
-                };
-        huffman.output
-    }
-}
+        let code_length = huffman.litterals.codes_length.get(END_OF_BLOCK);
+        let code = huffman.litterals.codes.get(END_OF_BLOCK);
+        huffman.bit_stream.write_word_be(code.into(), code_length.into());
 
-impl HuffmanDecoder of Decoder<ByteArray> {
-    fn decode(data: ByteArray) -> ByteArray {
-        let mut huffman = HuffmanImpl::new(@data);
-
-        huffman.output
+        huffman.bit_stream.into()
     }
 }
