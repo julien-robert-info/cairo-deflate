@@ -1,9 +1,8 @@
 use compression::tests::inputs;
 use compression::commons::{Encoder, Decoder};
 use compression::utils::dict_ext::DictWithKeys;
-use compression::huffman::{
-    HuffmanTable, HuffmanTableImpl, HuffmanEncoder, HuffmanDecoder, HuffmanImpl
-};
+use compression::huffman::{HuffmanEncoder, HuffmanDecoder, HuffmanImpl};
+use compression::huffman_table::{HuffmanTable, HuffmanTableImpl};
 
 #[test]
 #[available_gas(6000000)]
@@ -129,7 +128,7 @@ fn max_code_length() {
     frequencies.dict.insert('R', 1);
     frequencies.dict.insert('S', 37);
 
-    table.build(ref frequencies, max_code_length);
+    table.build_from_frequencies(ref frequencies, max_code_length);
 
     let expected_codes_length = array![5, 7, 4, 6, 6, 6, 2, 2, 5, 5, 6, 7, 7, 7, 2].span();
     //without tree correction
