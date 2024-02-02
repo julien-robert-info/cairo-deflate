@@ -24,6 +24,11 @@ struct Lz77<T> {
     output_pos: usize
 }
 
+#[derive(Drop)]
+enum Lz77Error {
+    NotEnoughData
+}
+
 trait Lz77Trait<T> {
     fn new(input: @T) -> Lz77<T>;
     fn window_start(self: @Lz77<T>) -> usize;
@@ -40,7 +45,7 @@ trait Lz77Trait<T> {
     fn output_raw_sequence(ref self: Lz77<T>, sequence: Sequence);
     fn output_sequence(ref self: Lz77<T>, sequence: Sequence);
     fn is_escaped(ref self: Lz77<T>) -> bool;
-    fn read_sequence(ref self: Lz77<T>) -> Sequence;
+    fn read_sequence(ref self: Lz77<T>) -> Result<Sequence, Lz77Error>;
     fn output_from_sequence(ref self: Lz77<T>, sequence: Sequence);
 }
 
@@ -271,9 +276,12 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         }
     }
     #[inline(always)]
-    fn read_sequence(ref self: Lz77<ByteArray>) -> Sequence {
+    fn read_sequence(ref self: Lz77<ByteArray>) -> Result<Sequence, Lz77Error> {
         let byte_left = self.input.len() - self.input_pos;
-        assert(byte_left >= CODE_BYTE_COUNT, 'Not enougth bytes to read');
+        if byte_left < SEQUENCE_BYTE_COUNT {
+            return Result::Err(Lz77Error::NotEnoughData);
+        }
+
         self.increment_pos();
         let length: u32 = self.input_read().unwrap().into() + MIN_SEQUENCE_LEN;
         self.increment_pos();
@@ -281,7 +289,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
         self.increment_pos();
         distance = distance * 256 + self.input_read().unwrap().into();
 
-        Sequence { length: length, distance: distance }
+        Result::Ok(Sequence { length: length, distance: distance })
     }
     fn output_from_sequence(ref self: Lz77<ByteArray>, sequence: Sequence) {
         if sequence.length > 0 {
@@ -343,11 +351,11 @@ impl Lz77Encoder of Encoder<ByteArray> {
     }
 }
 
-impl Lz77Decoder of Decoder<ByteArray> {
-    fn decode(data: ByteArray) -> ByteArray {
+impl Lz77Decoder of Decoder<ByteArray, Lz77Error> {
+    fn decode(data: ByteArray) -> Result<ByteArray, Lz77Error> {
         let mut lz77 = Lz77Impl::new(@data);
 
-        loop {
+        let result = loop {
             match lz77.input_read() {
                 Option::Some(byte) => {
                     if byte == ESCAPE_BYTE {
@@ -355,17 +363,24 @@ impl Lz77Decoder of Decoder<ByteArray> {
                             lz77.increment_pos();
                             lz77.output_byte(byte);
                         } else {
-                            lz77.output_from_code(lz77.read_sequence());
+                            let result = lz77.read_sequence();
+                            match result {
+                                Result::Ok(sequence) => lz77.output_from_sequence(sequence),
+                                Result::Err(err) => { break Result::Err(err); }
+                            }
                         }
                     } else {
                         lz77.output_byte(byte);
                     }
                 },
-                Option::None => { break; },
+                Option::None => { break Result::Ok(()); },
             }
             lz77.increment_pos();
         };
 
-        lz77.output
+        match result {
+            Result::Ok(()) => Result::Ok(lz77.output),
+            Result::Err(err) => Result::Err(err)
+        }
     }
 }

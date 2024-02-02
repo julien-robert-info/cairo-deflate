@@ -23,6 +23,12 @@ struct HuffmanTable {
     max_code_length: u8
 }
 
+#[derive(Drop)]
+enum HuffmanTableError {
+    CodeNotFound: (felt252, u8),
+    NotEnoughData
+}
+
 impl HuffmanTableDefault of Default<HuffmanTable> {
     #[inline(always)]
     fn default() -> HuffmanTable {
@@ -270,11 +276,18 @@ struct Huffman<T> {
     input_pos: usize
 }
 
+#[derive(Drop)]
+enum HuffmanError {
+    NotEnoughData,
+    HuffmanTableError: HuffmanTableError,
+    inconsistantTable
+}
+
 trait HuffmanTrait<T> {
     fn new(input: @T) -> Huffman<T>;
     fn input_read(ref self: Huffman<T>) -> Option<u8>;
     fn is_escaped(ref self: Huffman<T>) -> bool;
-    fn read_sequence(ref self: Huffman<T>) -> Sequence;
+    fn read_sequence(ref self: Huffman<T>) -> Result<Sequence, HuffmanError>;
     fn get_frequencies(
         ref self: Huffman<T>, ref litterals: DictWithKeys<u32>, ref distances: DictWithKeys<u32>
     );
@@ -317,14 +330,17 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         }
     }
     #[inline(always)]
-    fn read_sequence(ref self: Huffman<ByteArray>) -> Sequence {
+    fn read_sequence(ref self: Huffman<ByteArray>) -> Result<Sequence, HuffmanError> {
         let byte_left = self.input.len() - self.input_pos;
-        assert(byte_left >= CODE_BYTE_COUNT, 'Not enougth bytes to read');
+        if byte_left < SEQUENCE_BYTE_COUNT {
+            return Result::Err(HuffmanError::NotEnoughData);
+        }
+
         let length: usize = self.input_read().unwrap().into();
         let mut distance: usize = self.input_read().unwrap().into();
         distance = distance * 256 + self.input_read().unwrap().into();
 
-        Sequence { length: length, distance: distance }
+        Result::Ok(Sequence { length: length, distance: distance })
     }
     fn get_frequencies(
         ref self: Huffman<ByteArray>,
@@ -345,7 +361,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                 } else {
                     if !self.is_escaped() {
                         // get length and distance codes
-                        let sequence = self.read_sequence();
+                        let sequence = self.read_sequence().unwrap();
                         let (length_code, length_extra_bits) = sequence.get_length_code();
                         let (distance_code, distance_extra_bits) = sequence.get_distance_code();
                         //increment length and distance codes frequency
@@ -615,7 +631,7 @@ impl HuffmanEncoder of Encoder<ByteArray> {
                     } else {
                         if !huffman.is_escaped() {
                             // get length and distance codes
-                            let sequence = huffman.read_sequence();
+                            let sequence = huffman.read_sequence().unwrap();
                             let (length_code, length_extra_bits) = sequence.get_length_code();
                             let (distance_code, distance_extra_bits) = sequence.get_distance_code();
                             //output length and distance codes with extra bits

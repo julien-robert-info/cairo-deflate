@@ -73,7 +73,7 @@ fn cycle_1() {
     let compressed = Lz77Encoder::encode(inputs::get_test_phrase_1());
     let decompressed = Lz77Decoder::decode(compressed);
 
-    assert(decompressed == inputs::get_test_phrase_1(), 'unexpected result')
+    assert(decompressed.unwrap() == inputs::get_test_phrase_1(), 'unexpected result')
 }
 
 #[test]
@@ -82,6 +82,6 @@ fn cycle_2() {
     let compressed = Lz77Encoder::encode(inputs::get_test_phrase_2());
     let decompressed = Lz77Decoder::decode(compressed);
 
-    assert(decompressed == inputs::get_test_phrase_2(), 'unexpected result')
+    assert(decompressed.unwrap() == inputs::get_test_phrase_2(), 'unexpected result')
 }
 
