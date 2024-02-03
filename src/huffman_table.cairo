@@ -250,6 +250,7 @@ impl HuffmanTableImpl of HuffmanTableTrait {
             }
         }
     }
+    #[inline(always)]
     fn build_from_frequencies(
         ref self: HuffmanTable, ref frequencies: DictWithKeys<u32>, max_code_length: u8
     ) {
@@ -258,6 +259,7 @@ impl HuffmanTableImpl of HuffmanTableTrait {
         self.get_codes_length(ref frequencies.dict);
         self.build_from_codes_length(max_code_length);
     }
+    #[inline(always)]
     fn build_from_codes_length(ref self: HuffmanTable, max_code_length: u8) {
         self.max_code_length = max_code_length;
         self.set_codes();

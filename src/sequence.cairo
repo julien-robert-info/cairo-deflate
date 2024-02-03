@@ -40,35 +40,39 @@ impl SequenceImpl of SequenceTrait {
         let mut i = 0;
         let length_codes = @SequenceImpl::_length_codes();
         let extra_bits = @SequenceImpl::_length_extra_bits();
+        let length = *self.length;
         loop {
-            if *self.length < *length_codes[i] {
+            if length < *length_codes[i] {
                 break;
             }
             i += 1;
         };
 
-        (
-            (i + MAX_SEQUENCE_LEN).into(),
-            ExtraBits { value: (*self.length - *length_codes[i - 1]).into(), bits: *extra_bits[i] }
-        )
+        let mut extra = ExtraBits { value: 0, bits: *extra_bits[i] };
+        if extra.bits > 0 {
+            extra.value = (length - *length_codes[i - 1]).into();
+        }
+
+        ((i + MAX_SEQUENCE_LEN).into(), extra)
     }
     fn get_distance_code(self: @Sequence) -> (felt252, ExtraBits) {
         let mut i = 0;
         let distance_codes = @SequenceImpl::_distance_codes();
         let extra_bits = @SequenceImpl::_length_extra_bits();
+        let distance = *self.distance;
         loop {
-            if *self.distance < *distance_codes[i] {
+            if distance < *distance_codes[i] {
                 break;
             }
             i += 1;
         };
 
-        (
-            i.into(),
-            ExtraBits {
-                value: (*self.distance - *distance_codes[i - 1]).into(), bits: *extra_bits[i]
-            }
-        )
+        let mut extra = ExtraBits { value: 0, bits: *extra_bits[i] };
+        if extra.bits > 0 {
+            extra.value = (distance - *distance_codes[i - 1]).into();
+        }
+
+        (i.into(), extra)
     }
     #[inline(always)]
     fn _length_codes() -> Array<u32> {

@@ -1,4 +1,5 @@
 mod utils {
+    mod bit_array_ext;
     mod byte_array_ext;
     mod dict_ext;
     mod sorting;

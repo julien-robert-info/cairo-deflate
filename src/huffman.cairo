@@ -1,7 +1,7 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictEntryTrait;
 use compression::utils::dict_ext::DictWithKeys;
-use compression::utils::byte_array_ext::{BitArrayIntoByteArray, ByteArrayIntoBitArray};
+use compression::utils::bit_array_ext::{BitArrayIntoByteArray, ByteArrayIntoBitArray};
 use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
 use compression::deflate::magic_array;
 use compression::huffman_table::{HuffmanTable, HuffmanTableImpl, HuffmanTableError};
@@ -136,6 +136,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             Option::None(()) => (),
         }
     }
+    #[inline(always)]
     fn build_tables(ref self: Huffman<ByteArray>, max_code_length: u8) {
         let mut litterals_freq: DictWithKeys<u32> = Default::default();
         let mut distances_freq: DictWithKeys<u32> = Default::default();
