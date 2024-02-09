@@ -20,13 +20,21 @@ impl SequenceImpl of SequenceTrait {
     fn new(length_code: felt252, distance_code: felt252) -> (Sequence, u32, u32) {
         let length_extra_bits = @SequenceImpl::_length_extra_bits();
         let length_codes = @SequenceImpl::_length_codes();
-        let length_code: u32 = length_code.try_into().unwrap();
-        let length = *length_codes[length_code - 1];
+        let length_code: u32 = length_code.try_into().unwrap() - MAX_SEQUENCE_LEN;
+        let length = if length_code == 0 {
+            0
+        } else {
+            *length_codes[length_code - 1]
+        };
 
-        let distance_extra_bits = @SequenceImpl::_length_extra_bits();
+        let distance_extra_bits = @SequenceImpl::_distance_extra_bits();
         let distance_codes = @SequenceImpl::_distance_codes();
         let distance_code: u32 = distance_code.try_into().unwrap();
-        let distance = *distance_codes[distance_code - 1];
+        let distance = if distance_code == 0 {
+            0
+        } else {
+            *distance_codes[distance_code - 1]
+        };
 
         let sequence = Sequence { length: length, distance: distance };
 
@@ -58,7 +66,7 @@ impl SequenceImpl of SequenceTrait {
     fn get_distance_code(self: @Sequence) -> (felt252, ExtraBits) {
         let mut i = 0;
         let distance_codes = @SequenceImpl::_distance_codes();
-        let extra_bits = @SequenceImpl::_length_extra_bits();
+        let extra_bits = @SequenceImpl::_distance_extra_bits();
         let distance = *self.distance;
         loop {
             if distance < *distance_codes[i] {

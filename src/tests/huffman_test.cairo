@@ -1,8 +1,9 @@
 use compression::tests::inputs;
 use compression::commons::{Encoder, Decoder};
-use compression::utils::dict_ext::DictWithKeys;
 use compression::huffman::{HuffmanEncoder, HuffmanDecoder, HuffmanImpl};
 use compression::huffman_table::{HuffmanTable, HuffmanTableImpl};
+use compression::lz77::{Lz77Encoder, Lz77Decoder};
+use compression::utils::dict_ext::DictWithKeys;
 use compression::utils::slice::ByteArraySliceImpl;
 
 #[test]
@@ -173,5 +174,22 @@ fn test_huffman() {
     let decompressed = HuffmanDecoder::decode(compressed.slice(0, compressed.len()));
 
     assert(decompressed.unwrap() == inputs::get_test_phrase_2(), 'unexpected result')
+}
+
+#[test]
+#[available_gas(1500000000)]
+fn test_huffman_with_lz77() {
+    let input = inputs::get_test_phrase_2();
+    let lz77 = Lz77Encoder::encode(input.slice(0, input.len()));
+    let huffman = HuffmanEncoder::encode(lz77.slice(0, lz77.len()));
+
+    let huffman_decompressed = HuffmanDecoder::decode(huffman.slice(0, huffman.len()));
+    let huffman_decompressed = huffman_decompressed.unwrap();
+    let lz77_decompressed = Lz77Decoder::decode(
+        huffman_decompressed.slice(0, huffman_decompressed.len())
+    );
+    let lz77_decompressed = lz77_decompressed.unwrap();
+
+    assert(lz77_decompressed == inputs::get_test_phrase_2(), 'unexpected result')
 }
 

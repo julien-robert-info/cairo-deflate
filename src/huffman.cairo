@@ -6,12 +6,16 @@ use compression::utils::slice::{Slice, ByteArraySliceImpl};
 use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
 use compression::deflate::magic_array;
 use compression::huffman_table::{HuffmanTable, HuffmanTableImpl, HuffmanTableError};
-use compression::sequence::{ESCAPE_BYTE, SEQUENCE_BYTE_COUNT, Sequence, SequenceImpl};
+use compression::sequence::{
+    ESCAPE_BYTE, SEQUENCE_BYTE_COUNT, MIN_SEQUENCE_LEN, Sequence, SequenceImpl
+};
 use alexandria_data_structures::bit_array::{BitArray, BitArrayImpl};
 use alexandria_data_structures::array_ext::ArrayTraitExt;
 
 const LENGTH_BYTE_START: u32 = 257;
 const END_OF_BLOCK: felt252 = 256;
+const MAX_CODE_LENGTH: u8 = 15;
+const BIT_LENGTH_MAX_CODE_LENGTH: u8 = 7;
 
 #[derive(Destruct)]
 struct Huffman<T> {
@@ -101,6 +105,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             Option::Some(byte) => {
                 let felt_byte: felt252 = byte.into();
 
+                //raw byte
                 if byte != ESCAPE_BYTE {
                     //increment byte frequency
                     let (entry, prev_value) = litterals.dict.entry(felt_byte);
@@ -109,6 +114,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                     }
                     litterals.dict = entry.finalize(prev_value + 1);
                 } else {
+                    //sequence
                     if !self.is_escaped() {
                         // get length and distance codes
                         let sequence = self.read_sequence().unwrap();
@@ -116,6 +122,9 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                         let (distance_code, distance_extra_bits) = sequence.get_distance_code();
                         //increment length and distance codes frequency
                         let (entry, prev_value) = litterals.dict.entry(length_code);
+                        if prev_value == 0 {
+                            litterals.keys.append(length_code);
+                        }
                         litterals.dict = entry.finalize(prev_value + 1);
                         let (entry, prev_value) = distances.dict.entry(distance_code);
                         if prev_value == 0 {
@@ -123,11 +132,12 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
                         }
                         distances.dict = entry.finalize(prev_value + 1);
                     } else {
+                        //ESCAPE_BYTE
                         let (entry, prev_value) = litterals.dict.entry(felt_byte);
                         if prev_value == 0 {
                             litterals.keys.append(felt_byte);
                         }
-                        litterals.dict = entry.finalize(prev_value + 2);
+                        litterals.dict = entry.finalize(prev_value + 1);
                         self.input_pos += 1;
                     }
                 }
@@ -160,7 +170,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         let hlit = if lit_max <= LENGTH_BYTE_START {
             LENGTH_BYTE_START
         } else {
-            lit_max
+            lit_max + 1
         };
 
         let distances_sortable: Array<u32> = (@self.distances.symbols).try_into().unwrap();
@@ -302,7 +312,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         };
 
         let mut frequencies = DictWithKeys { keys: magic_array.clone(), dict: codes_length_freq };
-        self.bit_length.build_from_frequencies(ref frequencies, 7);
+        self.bit_length.build_from_frequencies(ref frequencies, BIT_LENGTH_MAX_CODE_LENGTH);
         (hlit, hdist)
     }
     fn restore_tables(input: Slice<ByteArray>) -> Result<Huffman<ByteArray>, HuffmanError> {
@@ -321,6 +331,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             return Result::Err(HuffmanError::NotEnoughData);
         }
 
+        //read hlit, hdist and hclen from bit_stream
         let hlit: u32 = huffman.bit_stream.read_word_be(5).unwrap().try_into().unwrap()
             + LENGTH_BYTE_START;
         let hdist: u32 = huffman.bit_stream.read_word_be(5).unwrap().try_into().unwrap() + 1;
@@ -330,6 +341,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             return Result::Err(HuffmanError::NotEnoughData);
         }
 
+        //read bit length table codes length
         let magic_array = @magic_array();
         let mut i = 0;
         loop {
@@ -344,8 +356,10 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             i += 1;
         };
 
-        huffman.bit_length.build_from_codes_length(7);
+        //restore bit length table
+        huffman.bit_length.build_from_codes_length(BIT_LENGTH_MAX_CODE_LENGTH);
 
+        //read bit length array with extra bits
         let mut bit_length_array = array![];
         let result = loop {
             if bit_length_array.len() >= hlit + hdist {
@@ -420,6 +434,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
             return Result::Err(result.unwrap_err());
         }
 
+        //build litterals table from bit length array
         let codes_length = @bit_length_array;
         i = 0;
         loop {
@@ -434,21 +449,25 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 
             i += 1;
         };
-        huffman.litterals.build_from_codes_length(15);
+        huffman.litterals.build_from_codes_length(MAX_CODE_LENGTH);
 
+        //build distances table from bit length array
         loop {
             if i >= hlit + hdist {
                 break;
             }
             let code_length = *codes_length[i];
             if code_length > 0 {
-                huffman.distances.symbols.append(i.into());
-                huffman.distances.codes_length.insert(i.into(), code_length.try_into().unwrap());
+                huffman.distances.symbols.append((i - hlit).into());
+                huffman
+                    .distances
+                    .codes_length
+                    .insert((i - hlit).into(), code_length.try_into().unwrap());
             }
 
             i += 1;
         };
-        huffman.distances.build_from_codes_length(15);
+        huffman.distances.build_from_codes_length(MAX_CODE_LENGTH);
 
         Result::Ok(huffman)
     }
@@ -457,9 +476,10 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 impl HuffmanEncoder of Encoder<ByteArray> {
     fn encode(data: Slice<ByteArray>) -> ByteArray {
         let mut huffman = HuffmanImpl::new(@data);
-        huffman.build_tables(max_code_length);
-        let (hlit, hdist) = huffman.bit_length_table(max_bit_length);
+        huffman.build_tables(MAX_CODE_LENGTH);
+        let (hlit, hdist) = huffman.bit_length_table(BIT_LENGTH_MAX_CODE_LENGTH);
 
+        //compute hclen from bit length table
         let symbols = @huffman.bit_length.symbols;
         let mut hclen = symbols.len() - 1;
         loop {
@@ -470,10 +490,12 @@ impl HuffmanEncoder of Encoder<ByteArray> {
             hclen -= 1;
         };
 
+        //encode hlit, hdist and hclen
         huffman.bit_stream.write_word_be((hlit - LENGTH_BYTE_START).into(), 5);
         huffman.bit_stream.write_word_be((hdist - 1).into(), 5);
         huffman.bit_stream.write_word_be((hclen - 4).into(), 4);
 
+        //encode bit length table
         let magic_array = magic_array();
         let mut i = 0;
         loop {
@@ -489,6 +511,7 @@ impl HuffmanEncoder of Encoder<ByteArray> {
             i += 1;
         };
 
+        //encode litterals and distance table from bit_length_array
         let mut span = huffman.bit_length_array.span();
         let mut repeat_values = huffman.repeat_values.span();
         loop {
@@ -514,6 +537,8 @@ impl HuffmanEncoder of Encoder<ByteArray> {
                 Option::None => { break; },
             };
         };
+
+        //encode actual data with huffman codes
         huffman.input_pos = 0;
         loop {
             match huffman.input_read() {
@@ -540,8 +565,8 @@ impl HuffmanEncoder of Encoder<ByteArray> {
                                     .write_word_be(length_extra_bits.value, length_extra_bits.bits);
                             }
 
-                            code_length = huffman.distances.codes_length.get(length_code);
-                            code = huffman.distances.codes.get(length_code);
+                            code_length = huffman.distances.codes_length.get(distance_code);
+                            code = huffman.distances.codes.get(distance_code);
                             huffman.bit_stream.write_word_be(code.into(), code_length.into());
                             if distance_extra_bits.bits > 0 {
                                 huffman
@@ -563,6 +588,7 @@ impl HuffmanEncoder of Encoder<ByteArray> {
             };
         };
 
+        //encode END_OF_BLOCK
         let code_length = huffman.litterals.codes_length.get(END_OF_BLOCK);
         let code = huffman.litterals.codes.get(END_OF_BLOCK);
         huffman.bit_stream.write_word_be(code.into(), code_length.into());
@@ -585,65 +611,53 @@ impl HuffmanDecoder of Decoder<ByteArray, HuffmanError> {
                                 break Result::Ok(output.clone());
                             }
 
-                            let symbol: u8 = symbol.try_into().unwrap();
-                            if symbol != ESCAPE_BYTE {
-                                output.append_byte(symbol);
+                            let u_symbol: u32 = symbol.try_into().unwrap();
+                            //raw byte or ESCAPE_BYTE
+                            if u_symbol < LENGTH_BYTE_START {
+                                if u_symbol == ESCAPE_BYTE.into() {
+                                    output.append_byte(symbol.try_into().unwrap());
+                                }
+                                output.append_byte(symbol.try_into().unwrap());
                             } else {
-                                //read sequence values
-                                let mut next_symbol = huffman
-                                    .litterals
+                                //sequence
+                                let length_code = symbol;
+                                let distance_code = huffman
+                                    .distances
                                     .read_code(ref huffman.bit_stream);
 
-                                if next_symbol.is_err() {
+                                if distance_code.is_err() {
                                     break Result::Err(
-                                        HuffmanError::HuffmanTableError(next_symbol.unwrap_err())
+                                        HuffmanError::HuffmanTableError(distance_code.unwrap_err())
                                     );
                                 }
-                                let next_symbol: u8 = next_symbol.unwrap().try_into().unwrap();
+                                let distance_code = distance_code.unwrap();
 
-                                if next_symbol != ESCAPE_BYTE {
-                                    let length_code: felt252 = next_symbol.into();
-                                    let mut distance_code = huffman
-                                        .distances
-                                        .read_code(ref huffman.bit_stream);
+                                let (sequence, length_extra_bits, distance_extra_bits) =
+                                    SequenceImpl::new(
+                                    length_code, distance_code
+                                );
 
-                                    if distance_code.is_err() {
-                                        break Result::Err(
-                                            HuffmanError::HuffmanTableError(
-                                                distance_code.unwrap_err()
-                                            )
-                                        );
-                                    }
+                                let extra_length: u32 = huffman
+                                    .bit_stream
+                                    .read_word_be(length_extra_bits)
+                                    .unwrap()
+                                    .try_into()
+                                    .unwrap();
 
-                                    let (sequence, length_extra_bits, distance_extra_bits) =
-                                        SequenceImpl::new(
-                                        length_code, distance_code.unwrap()
-                                    );
+                                let extra_distance: u32 = huffman
+                                    .bit_stream
+                                    .read_word_be(distance_extra_bits)
+                                    .unwrap()
+                                    .try_into()
+                                    .unwrap();
 
-                                    let extra_length: u32 = huffman
-                                        .bit_stream
-                                        .read_word_be(length_extra_bits)
-                                        .unwrap()
-                                        .try_into()
-                                        .unwrap();
-
-                                    let extra_distance: u32 = huffman
-                                        .bit_stream
-                                        .read_word_be(distance_extra_bits)
-                                        .unwrap()
-                                        .try_into()
-                                        .unwrap();
-
-                                    let sequence = Sequence {
-                                        length: sequence.length + extra_length,
-                                        distance: sequence.distance + extra_distance
-                                    };
-                                    //output sequence into byte array
-                                    let byte_sequence: ByteArray = sequence.into();
-                                    output.append(@byte_sequence);
-                                } else {
-                                    output.append_byte(ESCAPE_BYTE);
-                                }
+                                let sequence = Sequence {
+                                    length: sequence.length + extra_length + MIN_SEQUENCE_LEN,
+                                    distance: sequence.distance + extra_distance
+                                };
+                                //output sequence into byte array
+                                let byte_sequence: ByteArray = sequence.into();
+                                output.append(@byte_sequence);
                             }
                         },
                         Result::Err(err) => {
