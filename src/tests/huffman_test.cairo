@@ -3,11 +3,13 @@ use compression::commons::{Encoder, Decoder};
 use compression::utils::dict_ext::DictWithKeys;
 use compression::huffman::{HuffmanEncoder, HuffmanDecoder, HuffmanImpl};
 use compression::huffman_table::{HuffmanTable, HuffmanTableImpl};
+use compression::utils::slice::ByteArraySliceImpl;
 
 #[test]
-#[available_gas(6000000)]
+#[available_gas(7000000)]
 fn get_frequencies() {
-    let mut huffman = HuffmanImpl::new(@inputs::get_test_phrase_3());
+    let input = inputs::get_test_phrase_3();
+    let mut huffman = HuffmanImpl::new(@input.slice(0, input.len()));
     let mut bytes_freq: DictWithKeys<u32> = Default::default();
     let mut distance_codes_freq: DictWithKeys<u32> = Default::default();
 
@@ -166,8 +168,9 @@ fn max_code_length() {
 #[test]
 #[available_gas(1000000000)]
 fn test_huffman() {
-    let compressed = HuffmanEncoder::encode(inputs::get_test_phrase_2());
-    let decompressed = HuffmanDecoder::decode(compressed);
+    let input = inputs::get_test_phrase_2();
+    let compressed = HuffmanEncoder::encode(input.slice(0, input.len()));
+    let decompressed = HuffmanDecoder::decode(compressed.slice(0, compressed.len()));
 
     assert(decompressed.unwrap() == inputs::get_test_phrase_2(), 'unexpected result')
 }

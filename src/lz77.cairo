@@ -4,6 +4,7 @@ use compression::commons::{Encoder, Decoder};
 use compression::sequence::{
     ESCAPE_BYTE, SEQUENCE_BYTE_COUNT, MIN_SEQUENCE_LEN, MAX_SEQUENCE_LEN, Sequence
 };
+use compression::utils::slice::{Slice, ByteArraySliceImpl};
 use alexandria_data_structures::array_ext::SpanTraitExt;
 
 const WINDOW_SIZE: usize = 32768;
@@ -16,7 +17,7 @@ struct Match {
 
 #[derive(Destruct)]
 struct Lz77<T> {
-    input: @T,
+    input: @Slice<T>,
     output: T,
     matches: Array<Match>,
     byte_pos: Felt252Dict<Nullable<Span<usize>>>,
@@ -30,7 +31,7 @@ enum Lz77Error {
 }
 
 trait Lz77Trait<T> {
-    fn new(input: @T) -> Lz77<T>;
+    fn new(input: @Slice<T>) -> Lz77<T>;
     fn window_start(self: @Lz77<T>) -> usize;
     fn input_read(ref self: Lz77<T>) -> Option<u8>;
     fn increment_pos(ref self: Lz77<T>);
@@ -51,7 +52,7 @@ trait Lz77Trait<T> {
 
 impl Lz77Impl of Lz77Trait<ByteArray> {
     #[inline(always)]
-    fn new(input: @ByteArray) -> Lz77<ByteArray> {
+    fn new(input: @Slice<ByteArray>) -> Lz77<ByteArray> {
         Lz77 {
             input: input,
             output: Default::default(),
@@ -310,7 +311,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
 }
 
 impl Lz77Encoder of Encoder<ByteArray> {
-    fn encode(data: ByteArray) -> ByteArray {
+    fn encode(data: Slice<ByteArray>) -> ByteArray {
         let mut lz77 = Lz77Impl::new(@data);
 
         loop {
@@ -352,7 +353,7 @@ impl Lz77Encoder of Encoder<ByteArray> {
 }
 
 impl Lz77Decoder of Decoder<ByteArray, Lz77Error> {
-    fn decode(data: ByteArray) -> Result<ByteArray, Lz77Error> {
+    fn decode(data: Slice<ByteArray>) -> Result<ByteArray, Lz77Error> {
         let mut lz77 = Lz77Impl::new(@data);
 
         let result = loop {

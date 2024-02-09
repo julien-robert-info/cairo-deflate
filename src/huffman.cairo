@@ -1,7 +1,8 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictEntryTrait;
 use compression::utils::dict_ext::DictWithKeys;
-use compression::utils::bit_array_ext::{BitArrayIntoByteArray, ByteArrayIntoBitArray};
+use compression::utils::bit_array_ext::{BitArrayIntoByteArray, ByteArraySliceIntoBitArray};
+use compression::utils::slice::{Slice, ByteArraySliceImpl};
 use compression::commons::{Encoder, Decoder, ArrayTryInto, ArrayInto};
 use compression::deflate::magic_array;
 use compression::huffman_table::{HuffmanTable, HuffmanTableImpl, HuffmanTableError};
@@ -14,7 +15,7 @@ const END_OF_BLOCK: felt252 = 256;
 
 #[derive(Destruct)]
 struct Huffman<T> {
-    input: @T,
+    input: @Slice<T>,
     bit_stream: BitArray,
     litterals: HuffmanTable,
     distances: HuffmanTable,
@@ -32,7 +33,7 @@ enum HuffmanError {
 }
 
 trait HuffmanTrait<T> {
-    fn new(input: @T) -> Huffman<T>;
+    fn new(input: @Slice<T>) -> Huffman<T>;
     fn input_read(ref self: Huffman<T>) -> Option<u8>;
     fn is_escaped(ref self: Huffman<T>) -> bool;
     fn read_sequence(ref self: Huffman<T>) -> Result<Sequence, HuffmanError>;
@@ -41,12 +42,12 @@ trait HuffmanTrait<T> {
     );
     fn build_tables(ref self: Huffman<T>, max_code_length: u8);
     fn bit_length_table(ref self: Huffman<T>, max_bit_length: u8) -> (u32, u32);
-    fn restore_tables(input: T) -> Result<Huffman<T>, HuffmanError>;
+    fn restore_tables(input: Slice<T>) -> Result<Huffman<T>, HuffmanError>;
 }
 
 impl HuffmanImpl of HuffmanTrait<ByteArray> {
     #[inline(always)]
-    fn new(input: @ByteArray) -> Huffman<ByteArray> {
+    fn new(input: @Slice<ByteArray>) -> Huffman<ByteArray> {
         Huffman {
             input: input,
             bit_stream: Default::default(),
@@ -304,7 +305,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
         self.bit_length.build_from_frequencies(ref frequencies, 7);
         (hlit, hdist)
     }
-    fn restore_tables(input: ByteArray) -> Result<Huffman<ByteArray>, HuffmanError> {
+    fn restore_tables(input: Slice<ByteArray>) -> Result<Huffman<ByteArray>, HuffmanError> {
         let mut huffman = Huffman {
             input: @input,
             bit_stream: input.into(),
@@ -454,9 +455,7 @@ impl HuffmanImpl of HuffmanTrait<ByteArray> {
 }
 
 impl HuffmanEncoder of Encoder<ByteArray> {
-    fn encode(data: ByteArray) -> ByteArray {
-        let max_code_length = 15;
-        let max_bit_length = 7;
+    fn encode(data: Slice<ByteArray>) -> ByteArray {
         let mut huffman = HuffmanImpl::new(@data);
         huffman.build_tables(max_code_length);
         let (hlit, hdist) = huffman.bit_length_table(max_bit_length);
@@ -573,7 +572,7 @@ impl HuffmanEncoder of Encoder<ByteArray> {
 }
 
 impl HuffmanDecoder of Decoder<ByteArray, HuffmanError> {
-    fn decode(data: ByteArray) -> Result<ByteArray, HuffmanError> {
+    fn decode(data: Slice<ByteArray>) -> Result<ByteArray, HuffmanError> {
         let mut result = HuffmanImpl::restore_tables(data);
         match result {
             Result::Ok(mut huffman) => {

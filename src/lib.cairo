@@ -1,6 +1,6 @@
 mod utils {
     mod bit_array_ext;
-    mod byte_array_ext;
+    mod slice;
     mod dict_ext;
     mod sorting;
 }
@@ -17,6 +17,5 @@ mod tests {
     mod huffman_test;
     mod utils {
         mod sorting_test;
-        mod byte_array_ext_test;
     }
 }

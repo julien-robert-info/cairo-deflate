@@ -1,12 +1,14 @@
 use compression::tests::inputs;
 use compression::commons::{Encoder, Decoder};
 use compression::lz77::{Lz77Encoder, Lz77Decoder, Lz77Impl, Match};
+use compression::utils::slice::ByteArraySliceImpl;
 use compression::sequence::{ESCAPE_BYTE, Sequence};
 
 #[test]
-#[available_gas(450000)]
+#[available_gas(500000)]
 fn match_update() {
-    let mut lz77 = Lz77Impl::new(@inputs::get_test_phrase_1());
+    let input = inputs::get_test_phrase_1();
+    let mut lz77 = Lz77Impl::new(@input.slice(0, input.len()));
     lz77.input_pos = 7;
     lz77.output_pos = 6;
     lz77.matches = array![Match { sequence: Sequence { length: 1, distance: 5 }, pos: 6 }];
@@ -33,9 +35,10 @@ fn match_update() {
 }
 
 #[test]
-#[available_gas(450000)]
+#[available_gas(500000)]
 fn output_raw_sequence() {
-    let mut lz77 = Lz77Impl::new(@inputs::get_test_phrase_1());
+    let input = inputs::get_test_phrase_1();
+    let mut lz77 = Lz77Impl::new(@input.slice(0, input.len()));
     lz77.input_pos = 7;
 
     lz77.output_raw_sequence(Sequence { length: 3, distance: 3 });
@@ -47,9 +50,10 @@ fn output_raw_sequence() {
 }
 
 #[test]
-#[available_gas(900000)]
+#[available_gas(1000000)]
 fn process_matches() {
-    let mut lz77 = Lz77Impl::new(@inputs::get_test_phrase_1());
+    let input = inputs::get_test_phrase_1();
+    let mut lz77 = Lz77Impl::new(@input.slice(0, input.len()));
     lz77.input_pos = 13;
     lz77.output_pos = 6;
     lz77.matches = array![Match { sequence: Sequence { length: 3, distance: 5 }, pos: 10 }];
@@ -70,8 +74,9 @@ fn process_matches() {
 #[test]
 #[available_gas(35000000)]
 fn cycle_1() {
-    let compressed = Lz77Encoder::encode(inputs::get_test_phrase_1());
-    let decompressed = Lz77Decoder::decode(compressed);
+    let input = inputs::get_test_phrase_1();
+    let compressed = Lz77Encoder::encode(input.slice(0, input.len()));
+    let decompressed = Lz77Decoder::decode(compressed.slice(0, compressed.len()));
 
     assert(decompressed.unwrap() == inputs::get_test_phrase_1(), 'unexpected result')
 }
@@ -79,8 +84,9 @@ fn cycle_1() {
 #[test]
 #[available_gas(350000000)]
 fn cycle_2() {
-    let compressed = Lz77Encoder::encode(inputs::get_test_phrase_2());
-    let decompressed = Lz77Decoder::decode(compressed);
+    let input = inputs::get_test_phrase_2();
+    let compressed = Lz77Encoder::encode(input.slice(0, input.len()));
+    let decompressed = Lz77Decoder::decode(compressed.slice(0, compressed.len()));
 
     assert(decompressed.unwrap() == inputs::get_test_phrase_2(), 'unexpected result')
 }

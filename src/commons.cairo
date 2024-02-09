@@ -1,9 +1,11 @@
+use compression::utils::slice::Slice;
+
 trait Encoder<T> {
-    fn encode(data: T) -> T;
+    fn encode(data: Slice<T>) -> T;
 }
 
 trait Decoder<T, U> {
-    fn decode(data: T) -> Result<T, U>;
+    fn decode(data: Slice<T>) -> Result<T, U>;
 }
 
 impl ArrayInto<
