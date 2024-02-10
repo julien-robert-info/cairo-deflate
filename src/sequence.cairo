@@ -17,7 +17,7 @@ struct ExtraBits {
 
 #[generate_trait]
 impl SequenceImpl of SequenceTrait {
-    fn new(length_code: felt252, distance_code: felt252) -> (Sequence, u32, u32) {
+    fn get_length(length_code: felt252) -> (u32, u32) {
         let length_extra_bits = @SequenceImpl::_length_extra_bits();
         let length_codes = @SequenceImpl::_length_codes();
         let length_code: u32 = length_code.try_into().unwrap() - MAX_SEQUENCE_LEN;
@@ -27,6 +27,9 @@ impl SequenceImpl of SequenceTrait {
             *length_codes[length_code - 1]
         };
 
+        (length, (*length_extra_bits[length_code]).try_into().unwrap())
+    }
+    fn get_distance(distance_code: felt252) -> (u32, u32) {
         let distance_extra_bits = @SequenceImpl::_distance_extra_bits();
         let distance_codes = @SequenceImpl::_distance_codes();
         let distance_code: u32 = distance_code.try_into().unwrap();
@@ -36,13 +39,7 @@ impl SequenceImpl of SequenceTrait {
             *distance_codes[distance_code - 1]
         };
 
-        let sequence = Sequence { length: length, distance: distance };
-
-        return (
-            sequence,
-            (*length_extra_bits[length_code]).try_into().unwrap(),
-            (*distance_extra_bits[distance_code]).try_into().unwrap()
-        );
+        (distance, (*distance_extra_bits[distance_code]).try_into().unwrap())
     }
     fn get_length_code(self: @Sequence) -> (felt252, ExtraBits) {
         let mut i = 0;

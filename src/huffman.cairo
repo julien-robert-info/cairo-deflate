@@ -621,6 +621,21 @@ impl HuffmanDecoder of Decoder<ByteArray, HuffmanError> {
                             } else {
                                 //sequence
                                 let length_code = symbol;
+                                let (length, length_extra_bits) = SequenceImpl::get_length(
+                                    length_code
+                                );
+
+                                let extra_length: u32 = if length_extra_bits > 0 {
+                                    huffman
+                                        .bit_stream
+                                        .read_word_be(length_extra_bits)
+                                        .unwrap()
+                                        .try_into()
+                                        .unwrap()
+                                } else {
+                                    0
+                                };
+
                                 let distance_code = huffman
                                     .distances
                                     .read_code(ref huffman.bit_stream);
@@ -631,29 +646,24 @@ impl HuffmanDecoder of Decoder<ByteArray, HuffmanError> {
                                     );
                                 }
                                 let distance_code = distance_code.unwrap();
-
-                                let (sequence, length_extra_bits, distance_extra_bits) =
-                                    SequenceImpl::new(
-                                    length_code, distance_code
+                                let (distance, distance_extra_bits) = SequenceImpl::get_distance(
+                                    distance_code
                                 );
 
-                                let extra_length: u32 = huffman
-                                    .bit_stream
-                                    .read_word_be(length_extra_bits)
-                                    .unwrap()
-                                    .try_into()
-                                    .unwrap();
-
-                                let extra_distance: u32 = huffman
-                                    .bit_stream
-                                    .read_word_be(distance_extra_bits)
-                                    .unwrap()
-                                    .try_into()
-                                    .unwrap();
+                                let extra_distance: u32 = if distance_extra_bits > 0 {
+                                    huffman
+                                        .bit_stream
+                                        .read_word_be(distance_extra_bits)
+                                        .unwrap()
+                                        .try_into()
+                                        .unwrap()
+                                } else {
+                                    0
+                                };
 
                                 let sequence = Sequence {
-                                    length: sequence.length + extra_length + MIN_SEQUENCE_LEN,
-                                    distance: sequence.distance + extra_distance
+                                    length: length + extra_length + MIN_SEQUENCE_LEN,
+                                    distance: distance + extra_distance
                                 };
                                 //output sequence into byte array
                                 let byte_sequence: ByteArray = sequence.into();
