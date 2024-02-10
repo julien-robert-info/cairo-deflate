@@ -9,12 +9,14 @@ mod sequence;
 mod lz77;
 mod huffman;
 mod huffman_table;
+mod deflate;
 
 #[cfg(test)]
 mod tests {
     mod inputs;
     mod lz77_test;
     mod huffman_test;
+    mod deflate_test;
     mod utils {
         mod sorting_test;
     }
