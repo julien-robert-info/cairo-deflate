@@ -1,13 +1,3 @@
-use compression::utils::slice::Slice;
-
-trait Encoder<T, U> {
-    fn encode(data: Slice<T>, options: U) -> T;
-}
-
-trait Decoder<T, U> {
-    fn decode(data: Slice<T>) -> Result<T, U>;
-}
-
 impl ArrayInto<
     T, U, +Copy<T>, +Copy<U>, +Drop<T>, +Drop<U>, +Into<T, U>
 > of Into<@Array<T>, Array<U>> {
@@ -47,4 +37,3 @@ impl ArrayTryInto<
         }
     }
 }
-

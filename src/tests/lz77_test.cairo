@@ -1,5 +1,4 @@
 use compression::tests::inputs;
-use compression::commons::{Encoder, Decoder};
 use compression::lz77::{Lz77Encoder, Lz77Decoder, Lz77Impl, Match};
 use compression::utils::slice::ByteArraySliceImpl;
 use compression::sequence::{ESCAPE_BYTE, Sequence};

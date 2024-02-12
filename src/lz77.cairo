@@ -1,6 +1,6 @@
 use nullable::FromNullableResult;
 use integer::u32_overflowing_sub;
-use compression::commons::{Encoder, Decoder};
+use compression::encoder::{Encoder, Decoder};
 use compression::sequence::{
     ESCAPE_BYTE, SEQUENCE_BYTE_COUNT, MIN_SEQUENCE_LEN, MAX_SEQUENCE_LEN, Sequence
 };

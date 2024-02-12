@@ -1,9 +1,10 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictEntryTrait;
+use compression::utils::array_ext::{ArrayTryInto, ArrayInto};
 use compression::utils::dict_ext::DictWithKeys;
 use compression::utils::bit_array_ext::{BitArrayIntoByteArray, ByteArraySliceIntoBitArray};
 use compression::utils::slice::{Slice, ByteArraySliceImpl};
-use compression::commons::{Encoder, ArrayTryInto, ArrayInto};
+use compression::encoder::Encoder;
 use compression::deflate::magic_array;
 use compression::huffman_table::{HuffmanTable, HuffmanTableImpl, HuffmanTableError};
 use compression::sequence::{

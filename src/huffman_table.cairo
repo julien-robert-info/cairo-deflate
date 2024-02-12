@@ -1,7 +1,7 @@
 use nullable::FromNullableResult;
 use dict::Felt252DictEntryTrait;
 use integer::u16_overflowing_sub;
-use compression::commons::{ArrayTryInto, ArrayInto};
+use compression::utils::array_ext::{ArrayTryInto, ArrayInto};
 use compression::utils::sorting;
 use compression::utils::dict_ext::{DictWithKeys, clone_from_keys};
 use alexandria_math::pow;

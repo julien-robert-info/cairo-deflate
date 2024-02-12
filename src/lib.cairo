@@ -1,10 +1,11 @@
 mod utils {
+    mod array_ext;
     mod bit_array_ext;
     mod slice;
     mod dict_ext;
     mod sorting;
 }
-mod commons;
+mod encoder;
 mod sequence;
 mod lz77;
 mod huffman;

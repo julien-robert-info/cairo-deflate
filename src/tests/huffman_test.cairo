@@ -1,5 +1,4 @@
 use compression::tests::inputs;
-use compression::commons::{Encoder, Decoder};
 use compression::huffman::{HuffmanEncoder, HuffmanDecoder, HuffmanImpl};
 use compression::huffman_table::{HuffmanTable, HuffmanTableImpl};
 use compression::lz77::{Lz77Encoder, Lz77Decoder};

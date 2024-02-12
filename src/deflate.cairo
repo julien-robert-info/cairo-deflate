@@ -1,4 +1,4 @@
-use compression::commons::{Encoder, Decoder};
+use compression::encoder::{Encoder, Decoder};
 use compression::lz77::{Lz77Encoder, Lz77EncoderOptions, Lz77Decoder, Lz77Error};
 use compression::huffman::{HuffmanEncoder, HuffmanEncoderOptions, HuffmanDecoder, HuffmanError};
 use compression::utils::slice::{Slice, ByteArraySliceImpl, BitArraySliceImpl};

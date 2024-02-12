@@ -1,5 +1,4 @@
 use compression::tests::inputs;
-use compression::commons::{Encoder, Decoder};
 use compression::deflate::{DeflateEncoder, DeflateDecoder};
 use compression::utils::slice::ByteArraySliceImpl;
 
