@@ -26,7 +26,7 @@ struct HuffmanEncoderOptions {
 impl HuffmanEncoderOptionsDefault of Default<HuffmanEncoderOptions> {
     #[inline(always)]
     fn default() -> HuffmanEncoderOptions {
-        HuffmanEncoderOptions { huffman_dynamic: true }
+        HuffmanEncoderOptions { huffman_dynamic: false }
     }
 }
 
