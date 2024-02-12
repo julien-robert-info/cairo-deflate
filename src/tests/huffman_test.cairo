@@ -170,8 +170,10 @@ fn max_code_length() {
 #[available_gas(1000000000)]
 fn test_huffman() {
     let input = inputs::get_test_phrase_2();
-    let compressed = HuffmanEncoder::encode(input.slice(0, input.len()));
-    let decompressed = HuffmanDecoder::decode(compressed.slice(0, compressed.len()));
+    let compressed = HuffmanEncoder::encode(input.slice(0, input.len()), Default::default());
+    let decompressed = HuffmanDecoder::decode(
+        compressed.slice(0, compressed.len()), Default::default()
+    );
 
     assert(decompressed.unwrap() == inputs::get_test_phrase_2(), 'unexpected result')
 }
@@ -180,10 +182,12 @@ fn test_huffman() {
 #[available_gas(1500000000)]
 fn test_huffman_with_lz77() {
     let input = inputs::get_test_phrase_2();
-    let lz77 = Lz77Encoder::encode(input.slice(0, input.len()));
-    let huffman = HuffmanEncoder::encode(lz77.slice(0, lz77.len()));
+    let lz77 = Lz77Encoder::encode(input.slice(0, input.len()), Default::default());
+    let huffman = HuffmanEncoder::encode(lz77.slice(0, lz77.len()), Default::default());
 
-    let huffman_decompressed = HuffmanDecoder::decode(huffman.slice(0, huffman.len()));
+    let huffman_decompressed = HuffmanDecoder::decode(
+        huffman.slice(0, huffman.len()), Default::default()
+    );
     let huffman_decompressed = huffman_decompressed.unwrap();
     let lz77_decompressed = Lz77Decoder::decode(
         huffman_decompressed.slice(0, huffman_decompressed.len())

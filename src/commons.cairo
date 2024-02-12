@@ -1,7 +1,7 @@
 use compression::utils::slice::Slice;
 
-trait Encoder<T> {
-    fn encode(data: Slice<T>) -> T;
+trait Encoder<T, U> {
+    fn encode(data: Slice<T>, options: U) -> T;
 }
 
 trait Decoder<T, U> {

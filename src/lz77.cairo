@@ -7,7 +7,17 @@ use compression::sequence::{
 use compression::utils::slice::{Slice, ByteArraySliceImpl};
 use alexandria_data_structures::array_ext::SpanTraitExt;
 
-const WINDOW_SIZE: usize = 32768;
+#[derive(Copy, Drop)]
+struct Lz77EncoderOptions {
+    window_size: usize
+}
+
+impl Lz77EncoderOptionsDefault of Default<Lz77EncoderOptions> {
+    #[inline(always)]
+    fn default() -> Lz77EncoderOptions {
+        Lz77EncoderOptions { window_size: 32768 }
+    }
+}
 
 #[derive(Copy, Drop)]
 struct Match {
@@ -17,6 +27,7 @@ struct Match {
 
 #[derive(Destruct)]
 struct Lz77<T> {
+    window_size: usize,
     input: @Slice<T>,
     output: T,
     matches: Array<Match>,
@@ -31,7 +42,7 @@ enum Lz77Error {
 }
 
 trait Lz77Trait<T> {
-    fn new(input: @Slice<T>) -> Lz77<T>;
+    fn new(input: @Slice<T>, options: Lz77EncoderOptions) -> Lz77<T>;
     fn window_start(self: @Lz77<T>) -> usize;
     fn input_read(ref self: Lz77<T>) -> Option<u8>;
     fn increment_pos(ref self: Lz77<T>);
@@ -52,8 +63,9 @@ trait Lz77Trait<T> {
 
 impl Lz77Impl of Lz77Trait<ByteArray> {
     #[inline(always)]
-    fn new(input: @Slice<ByteArray>) -> Lz77<ByteArray> {
+    fn new(input: @Slice<ByteArray>, options: Lz77EncoderOptions) -> Lz77<ByteArray> {
         Lz77 {
+            window_size: options.window_size,
             input: input,
             output: Default::default(),
             matches: array![],
@@ -64,7 +76,7 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     }
     #[inline(always)]
     fn window_start(self: @Lz77<ByteArray>) -> usize {
-        match u32_overflowing_sub(*self.input_pos, WINDOW_SIZE) {
+        match u32_overflowing_sub(*self.input_pos, *self.window_size) {
             Result::Ok(x) => x,
             Result::Err(x) => 0_u32,
         }
@@ -310,9 +322,9 @@ impl Lz77Impl of Lz77Trait<ByteArray> {
     }
 }
 
-impl Lz77Encoder of Encoder<ByteArray> {
-    fn encode(data: Slice<ByteArray>) -> ByteArray {
-        let mut lz77 = Lz77Impl::new(@data);
+impl Lz77Encoder of Encoder<ByteArray, Lz77EncoderOptions> {
+    fn encode(data: Slice<ByteArray>, options: Lz77EncoderOptions) -> ByteArray {
+        let mut lz77 = Lz77Impl::new(@data, options);
 
         loop {
             //get new byte
@@ -354,7 +366,7 @@ impl Lz77Encoder of Encoder<ByteArray> {
 
 impl Lz77Decoder of Decoder<ByteArray, Lz77Error> {
     fn decode(data: Slice<ByteArray>) -> Result<ByteArray, Lz77Error> {
-        let mut lz77 = Lz77Impl::new(@data);
+        let mut lz77 = Lz77Impl::new(@data, Default::default());
 
         let result = loop {
             match lz77.input_read() {
