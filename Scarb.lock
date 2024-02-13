@@ -32,7 +32,7 @@ source = "git+https://github.com/keep-starknet-strange/alexandria.git#db4e0210be
 
 [[package]]
 name = "compression"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "alexandria_math",
  "alexandria_sorting",

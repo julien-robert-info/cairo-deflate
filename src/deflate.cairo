@@ -19,7 +19,7 @@ impl DeflateEncoderOptionsDefault of Default<DeflateEncoderOptions> {
     fn default() -> DeflateEncoderOptions {
         DeflateEncoderOptions {
             max_block_size: 65536,
-            block_type: BlockType::DynamicHuffman,
+            block_type: BlockType::StaticHuffman,
             lz77_options: Default::default()
         }
     }
